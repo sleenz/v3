@@ -548,6 +548,7 @@ WhatsApp Cloud API with a number and app that BRI registers in Meta Business Man
      deadline) and to `Notes` as `Sender's PROMPT: …`. Rules read only the forwarded request.
    - A PROMPT within 5 minutes after its request was logged applies to that task while it is
      still `Proposed` (AuditLog `PROMPT applied`).
+   - Section 21 adds `reviewer <name>` and a deadline to the PROMPT, and the PROMPT in email.
 6. **Logging:** the draft becomes one `process_request` (Source `WhatsApp`, Source ID = the first
    message ID, which dedupes retries). PDFs are downloaded from Meta and read by the AI (item
    11); other files are names only unless `File storage` = Drive. `Files` reads "In the WhatsApp
@@ -712,3 +713,40 @@ repeating task (section 3). The daily `/jobs/recurring` (07:00):
   once and makes that run read the inbox once more. A failed push-triggered run is logged; the
   mail stays unread for the next run (D15).
 - **The 10-minute `/jobs/gmail` stays** as the safety net for a lost push or a lapsed watch.
+
+## 21. PROMPT overrides: reviewer, deadline and email (approved 9 Nov 2026)
+
+Extends section 17.5. The parsing is in `app/extract/prompt.py` (pure, fixed rules; the AI never
+reads a PROMPT for who or when).
+
+1. **Where a PROMPT comes from.** Only text the sender typed:
+   - WhatsApp: a message (or file caption) starting `PROMPT:`, as before;
+   - email: the first paragraph starting `PROMPT` (up to the first blank line), above a forward
+     or at the top of a new email, **and only when the sender's address is in the Staff tab**.
+     Otherwise the row is flagged `PROMPT ignored: sender is not in Staff` and nothing changes.
+   - `PROMPT inject:` is accepted as `PROMPT:`.
+   - Text inside a forwarded message or a PDF is never a PROMPT, so a document cannot choose who
+     does the work or when.
+2. **Owner:** `assign (this) to <name>` as in 17.5. The name now ends at the next instruction
+   (`with`, `reviewer`, `deadline`, `due`, `by`, `in`, `dengan`, a comma …), so "assign this to
+   Staff P with reviewer Staff D" proposes Staff P. The routing note says `(WhatsApp PROMPT)` or
+   `(Email PROMPT)`.
+3. **Reviewer:** `reviewer <name>` (also `with reviewer`, `reviewer is`, `reviewed by`,
+   `direview oleh`), matched against Staff like the owner. A match fills `Reviewer` and sets
+   `Needs review` = `Yes`. An unknown name is flagged `PROMPT: reviewer "<name>" not found in
+   Staff`; a reviewer who is also the Doer is flagged.
+4. **Deadline:** beats the message, the PDF and the AI, and their deadline flags are dropped.
+   - Counted: `deadline 3 days from now`, `in 3 days`, `3 hari lagi`, `dalam 2 minggu`,
+     `tomorrow`/`besok`. Calendar days from the day the request is logged; a Saturday or Sunday
+     moves to the Friday before (as D2).
+   - Typed: a date within 20 characters after `deadline`, `due`, `by`, `before`, `sebelum`,
+     `tenggat` or `paling lambat`, kept as typed. A date in the past is flagged `PROMPT deadline
+     already passed`.
+   - On WhatsApp the "Reply YES" deadline question is not asked (the sender just said it), and a
+     late PROMPT (17.5) with a deadline closes an open question.
+5. **Approval is unchanged:** the task stays `Proposed` until the Manager approves it, whoever
+   sent the PROMPT.
+6. A late WhatsApp PROMPT (within 5 minutes, task still `Proposed`) applies all three overrides,
+   with one AuditLog `PROMPT applied` row per field changed.
+7. Not covered: a PROMPT in an email reply to an already-logged thread is added to Notes like any
+   reply; use the `assign … to …` command there.

@@ -672,3 +672,35 @@ def test_logs_never_carry_numbers_or_message_text(caplog):
     formatted = "".join(JsonFormatter().format(record) for record in caplog.records)
     for secret in (A, STRANGER, "stress test", "Staff P", "PROMPT"):
         assert secret not in formatted
+
+
+# --- section 21: reviewer and deadline in a PROMPT ---------------------------------------------
+
+
+def test_prompt_inject_sets_owner_reviewer_and_deadline_and_asks_nothing():
+    ctx = context(ai=FakeAIProvider(AI_RESULT))
+    handle_message(text("w1", REQUEST), ctx)
+    prompt = "prompt inject: assign this to Staff P with reviewer Staff D deadline 3 days from now"
+    handle_message(text("w2", prompt), ctx)
+    assert finalize("w1", ctx) == "logged"
+    row = task(ctx, logged(ctx))
+    assert (row.owner, row.reviewer, row.needs_review) == ("Staff P", "Staff D", "Yes")
+    assert row.due_date == date(2026, 10, 29) and DEADLINE_FLAG not in row.flags
+    assert row.status == "Proposed"
+    assert "Deadline: Thu 29 Oct 2026, as in your PROMPT." in ctx.wa.last_text(A)
+    assert [r for r in pending(ctx) if r.kind == "confirm"] == []
+
+
+def test_late_prompt_sets_reviewer_and_deadline():
+    ctx = context()
+    handle_message(text("w1", REQUEST), ctx)
+    finalize("w1", ctx)
+    task_id = logged(ctx)
+    later = now() + timedelta(minutes=2)
+    handle_message(text("w2", "PROMPT: reviewer Staff D, deadline in 3 days"), ctx, now=later)
+    row = task(ctx, task_id)
+    assert (row.reviewer, row.due_date) == ("Staff D", date(2026, 10, 29))
+    assert DEADLINE_FLAG not in row.flags
+    assert "reviewer is Staff D, due Thu 29 Oct 2026" in ctx.wa.last_text(A)
+    assert [r.status for r in pending(ctx) if r.kind == "confirm"] == ["done"]
+    assert ctx.store.backend.column("AuditLog", "Field")[-2:] == ["Reviewer", "Due date"]

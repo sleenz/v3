@@ -109,8 +109,9 @@ def sender_assignment(
     staff: list[StaffMember],
     today: date,
     due: date | None,
+    channel: str = "WhatsApp",
 ) -> RouteResult:
-    """Apply "assign this to <name>" from the sender's WhatsApp PROMPT (v1.3).
+    """Apply "assign this to <name>" from the sender's PROMPT (v1.3; email: section 21).
 
     A person chose, not the AI, and the task still waits for the manager's approval. The rules'
     proposal is kept in the routing note. An unknown name leaves the rules' result and flags it.
@@ -125,7 +126,7 @@ def sender_assignment(
     if reason:
         flags.append(f"Assigned by sender: {person.name} {reason}")
     rules_said = routed.owner or "nobody"
-    note = f"Assigned by sender (WhatsApp PROMPT) to {person.name}; rules proposed {rules_said}"
+    note = f"Assigned by sender ({channel} PROMPT) to {person.name}; rules proposed {rules_said}"
     boss, doer = owner_and_doer(person, staff)
     return RouteResult(
         owner=boss,

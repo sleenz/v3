@@ -452,3 +452,65 @@ def test_too_many_pdfs_are_flagged(fixture_text):
     process_request(email(fixture_text("no_date.txt"), attachments=pdfs), services)
     assert ai.calls[0]["documents"] == ["p0.pdf", "p1.pdf", "p2.pdf"]
     assert ai_module.PDFS_SKIPPED_FLAG in only_task(services).flags
+
+
+# --- section 21: the sender's PROMPT in an email ----------------------------------------------
+
+STAFF_A = {"sender_name": "Staff A", "sender_email": "staff.a@example.com"}
+PROMPT_LINE = "PROMPT inject: assign this to Staff P with reviewer Staff D deadline 3 days from now"
+
+
+def test_email_prompt_above_a_forward_sets_owner_reviewer_and_deadline(fixture_text):
+    ai = FakeAIProvider(VALID_AI)  # the AI and the PDF say 6 Nov; the sender's PROMPT wins
+    services = make_services(ai=ai, ai_setting="Gemini API key")
+    body = PROMPT_LINE + "\n\n" + fixture_text("manpower_planning.txt")
+    result = process_request(email(body, **STAFF_A), services)
+    task = only_task(services)
+    assert (task.owner, task.doer, task.status) == ("Staff P", "Staff P", "Proposed")
+    assert task.routing_note.startswith("Assigned by sender (Email PROMPT) to Staff P")
+    assert (task.reviewer, task.needs_review) == ("Staff D", "Yes")
+    assert task.due_date == result.due_date == date(2026, 10, 29)
+    assert not any("deadline" in flag.lower() for flag in task.flags)
+    assert task.notes.startswith("Manager note: Tolong dicek ya")
+    assert "Sender's PROMPT: assign this to Staff P" in task.notes
+    [call] = ai.calls
+    assert "Sender's instructions: assign this to Staff P" in call["text"]
+
+
+def test_email_prompt_at_the_top_of_a_new_email():
+    services = make_services()
+    body = "PROMPT: assign to Staff P\n\nMohon kirim laporan stress test, deadline 20 Nov 2026."
+    process_request(email(body, subject="Stress test", **STAFF_A), services)
+    task = only_task(services)
+    assert task.owner == "Staff P" and task.due_date == date(2026, 11, 20)
+    assert task.reviewer == "" and task.needs_review == ""
+
+
+def test_email_prompt_from_someone_not_in_staff_is_ignored(fixture_text):
+    services = make_services()
+    body = PROMPT_LINE + "\n\n" + fixture_text("manpower_planning.txt")
+    process_request(email(body), services)  # the manager address is not in the Staff tab
+    task = only_task(services)
+    assert task.owner != "Staff P" and task.reviewer == ""
+    assert task.due_date != date(2026, 10, 29)
+    assert "PROMPT ignored: sender is not in Staff" in task.flags
+
+
+def test_a_prompt_inside_the_forwarded_message_is_never_obeyed(fixture_text):
+    services = make_services()
+    forwarded = fixture_text("manpower_planning.txt").replace(
+        "Selamat siang", PROMPT_LINE + "\n\nSelamat siang", 1
+    )
+    process_request(email(forwarded, **STAFF_A), services)
+    task = only_task(services)
+    assert task.owner != "Staff P" and task.reviewer == ""
+    assert "Sender's PROMPT" not in task.notes
+
+
+def test_email_prompt_with_an_unknown_reviewer_is_flagged():
+    services = make_services()
+    body = "PROMPT: reviewer Nobody Here\n\nMohon kirim laporan stress test."
+    process_request(email(body, subject="Stress test", **STAFF_A), services)
+    task = only_task(services)
+    assert task.reviewer == ""
+    assert 'PROMPT: reviewer "Nobody Here" not found in Staff' in task.flags
