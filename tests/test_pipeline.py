@@ -514,3 +514,13 @@ def test_email_prompt_with_an_unknown_reviewer_is_flagged():
     task = only_task(services)
     assert task.reviewer == ""
     assert 'PROMPT: reviewer "Nobody Here" not found in Staff' in task.flags
+
+
+def test_email_prompt_line_after_the_request_with_ask_and_a_weekday():
+    services = make_services()
+    body = "make a financial report for q3\nprompt : ask Staff P to do it, deadline this friday\n"
+    process_request(email(body, subject="Q3 report", **STAFF_A), services)
+    task = only_task(services)
+    assert task.owner == "Staff P" and task.due_date == date(2026, 10, 30)
+    assert "prompt" not in task.title.lower()
+    assert "Sender's PROMPT: ask Staff P to do it, deadline this friday" in task.notes

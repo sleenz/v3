@@ -127,12 +127,12 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
     else:
         unwrapped = Unwrapped(original, raw.sender_name, raw.sender_email, "", None, False)
 
-    # 2b. An email PROMPT (DESIGN section 21): the first paragraph the sender typed, above a
-    # forward or at the top of a new email. Only a Staff member's PROMPT counts.
+    # 2b. An email PROMPT (DESIGN section 21): any `PROMPT:` line the sender typed, above a
+    # forward or anywhere in a new email. Only a Staff member's PROMPT counts.
     note = raw.sender_note.strip()
     if raw.source == "Email" and not note:
         typed = unwrapped.manager_note if unwrapped.forwarded else unwrapped.body
-        found, rest = sender_prompt.split_email_prompt(typed or "")
+        found, rest = sender_prompt.split_prompt_lines(typed or "")
         if found and _is_staff(store, raw.sender_email):
             note = found
             if unwrapped.forwarded:

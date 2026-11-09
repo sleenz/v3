@@ -10,7 +10,7 @@ from app.extract.prompt import (
     overrides,
     parse_prompt,
     reviewer,
-    split_email_prompt,
+    split_prompt_lines,
 )
 
 MONDAY = date(2026, 10, 26)
@@ -98,10 +98,47 @@ def test_prompt_inject_is_a_prompt():
     assert parse_prompt("Please inject the prompt") is None
 
 
-def test_split_email_prompt():
-    body = "\nPROMPT: assign to Staff P\nreviewer Staff A\n\nTolong dicek ya\n"
-    assert split_email_prompt(body) == ("assign to Staff P\nreviewer Staff A", "Tolong dicek ya")
-    assert split_email_prompt("Tolong dicek\nPROMPT: assign to Staff P") == (
-        "",
-        "Tolong dicek\nPROMPT: assign to Staff P",
+def test_split_prompt_lines():
+    body = "make a financial report for q3\nprompt : ask Staff P to do it\nThanks\n"
+    assert split_prompt_lines(body) == (
+        "ask Staff P to do it",
+        "make a financial report for q3\nThanks",
     )
+    two = "PROMPT: assign to Staff P\nPROMPT inject reviewer Staff D\n\nTolong dicek"
+    assert split_prompt_lines(two) == ("assign to Staff P\nreviewer Staff D", "Tolong dicek")
+    for text in ("Prompt action is required by Friday", "Tolong dicek\nNo prompt here"):
+        assert split_prompt_lines(text) == ("", text)
+
+
+@pytest.mark.parametrize(
+    ("text", "name"),
+    [
+        ("ask Staff P to do it and the deadline is this friday", "Staff P"),
+        ("ask staff p to do this deadline this friday", "staff p"),
+        ("minta Staff P untuk siapkan laporannya", "Staff P"),
+        ("suruh Staff P buat laporan", "Staff P"),
+        ("ask the bank to confirm", "the bank"),  # matched against Staff later, then flagged
+    ],
+)
+def test_ask_someone_to(text, name):
+    assert assignee(text) == name
+
+
+@pytest.mark.parametrize(
+    ("text", "today", "due"),
+    [
+        ("the deadline is this friday", MONDAY, date(2026, 10, 30)),
+        ("deadline friday", MONDAY, date(2026, 10, 30)),
+        ("paling lambat jumat ini", MONDAY, date(2026, 10, 30)),
+        ("deadline next friday", MONDAY, date(2026, 11, 6)),
+        ("deadline friday next week", MONDAY, date(2026, 11, 6)),
+        ("deadline jumat depan", MONDAY, date(2026, 11, 6)),
+        ("by wednesday", MONDAY, date(2026, 10, 28)),
+        ("by monday", MONDAY, date(2026, 11, 2)),  # said on a Monday: the next one
+        ("deadline this monday", MONDAY, MONDAY),
+        ("deadline this friday", date(2026, 10, 30), date(2026, 10, 30)),
+        ("this is the friday report", MONDAY, None),  # no deadline word: not a deadline
+    ],
+)
+def test_weekday_deadlines(text, today, due):
+    assert deadline(text, today)[0] == due
