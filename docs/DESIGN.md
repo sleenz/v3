@@ -721,16 +721,21 @@ reads a PROMPT for who or when).
 
 1. **Where a PROMPT comes from.** Only text the sender typed:
    - WhatsApp: a message (or file caption) starting `PROMPT:`, as before;
-   - email: the first paragraph starting `PROMPT` (up to the first blank line), above a forward
-     or at the top of a new email, **and only when the sender's address is in the Staff tab**.
+   - email: **every line** starting `PROMPT:` (or `PROMPT inject`), in the text above a forward
+     or anywhere in a new email, **and only when the sender's address is in the Staff tab**.
+     The colon is required in email, so a sentence such as "Prompt action is required" is not a
+     PROMPT. The lines are taken out of the request; each PROMPT is one line (amended 9 Nov
+     2026, after live tests: the first-paragraph rule missed PROMPTs typed below the request).
      Otherwise the row is flagged `PROMPT ignored: sender is not in Staff` and nothing changes.
    - `PROMPT inject:` is accepted as `PROMPT:`.
    - Text inside a forwarded message or a PDF is never a PROMPT, so a document cannot choose who
      does the work or when.
 2. **Owner:** `assign (this) to <name>` as in 17.5. The name now ends at the next instruction
    (`with`, `reviewer`, `deadline`, `due`, `by`, `in`, `dengan`, a comma …), so "assign this to
-   Staff P with reviewer Staff D" proposes Staff P. The routing note says `(WhatsApp PROMPT)` or
-   `(Email PROMPT)`.
+   Staff P with reviewer Staff D" proposes Staff P. `ask <name> to …` (also `minta <name>
+   untuk`, `suruh <name> buat`) also names the owner: the shortest text before `to`. A phrase
+   like "ask the bank to confirm" names nobody in Staff, so it is flagged and the rules' owner
+   stays. The routing note says `(WhatsApp PROMPT)` or `(Email PROMPT)`.
 3. **Reviewer:** `reviewer <name>` (also `with reviewer`, `reviewer is`, `reviewed by`,
    `direview oleh`), matched against Staff like the owner. A match fills `Reviewer` and sets
    `Needs review` = `Yes`. An unknown name is flagged `PROMPT: reviewer "<name>" not found in
@@ -742,6 +747,10 @@ reads a PROMPT for who or when).
    - Typed: a date within 20 characters after `deadline`, `due`, `by`, `before`, `sebelum`,
      `tenggat` or `paling lambat`, kept as typed. A date in the past is flagged `PROMPT deadline
      already passed`.
+   - Weekday, after one of those words: `this friday` / `jumat ini` = the coming Friday, today
+     included; `friday` alone = the next Friday after today; `next friday` / `jumat depan` /
+     `friday next week` = the Friday of next week. English and Indonesian day names; `Minggu`
+     is not read as Sunday (it also means "week"). Kept as typed, even on a weekend.
    - On WhatsApp the "Reply YES" deadline question is not asked (the sender just said it), and a
      late PROMPT (17.5) with a deadline closes an open question.
 5. **Approval is unchanged:** the task stays `Proposed` until the Manager approves it, whoever
