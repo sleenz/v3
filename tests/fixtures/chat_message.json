@@ -1,0 +1,30 @@
+{
+  "type": "MESSAGE",
+  "eventTime": "2026-10-26T02:00:00.000000Z",
+  "space": {"name": "spaces/AAAA", "type": "DM"},
+  "user": {"name": "users/1", "displayName": "Staff A", "email": "staff.a@example.com", "type": "HUMAN"},
+  "message": {
+    "name": "spaces/AAAA/messages/BBBB.CCCC",
+    "createTime": "2026-10-26T02:00:00.000000Z",
+    "sender": {"name": "users/1", "displayName": "Staff A", "email": "staff.a@example.com"},
+    "text": "@GRC Tracker Mohon kirim hasil stress test triwulan III paling lambat Jumat 13 November 2026. PIC Dewi Lestari.",
+    "argumentText": " Mohon kirim hasil stress test triwulan III paling lambat Jumat 13 November 2026. PIC Dewi Lestari.",
+    "attachment": [
+      {
+        "name": "spaces/AAAA/messages/BBBB.CCCC/attachments/1",
+        "contentName": "Format_Stress_Test.xlsx",
+        "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "attachmentDataRef": {"resourceName": "resource-1"},
+        "source": "UPLOADED_CONTENT"
+      },
+      {
+        "name": "spaces/AAAA/messages/BBBB.CCCC/attachments/2",
+        "contentName": "Shared from Drive",
+        "contentType": "application/vnd.google-apps.document",
+        "driveDataRef": {"driveFileId": "drive-file-1"},
+        "source": "DRIVE_FILE"
+      }
+    ],
+    "space": {"name": "spaces/AAAA"}
+  }
+}

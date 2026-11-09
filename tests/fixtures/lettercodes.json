@@ -1,0 +1,40 @@
+{
+ "columns": [
+  "Letter code",
+  "Route to division"
+ ],
+ "rows": [
+  {
+   "Letter code": "DIR/ASQ",
+   "Route to division": "Audit"
+  },
+  {
+   "Letter code": "DIR/SBM",
+   "Route to division": "Finance"
+  },
+  {
+   "Letter code": "EMR/IRM",
+   "Route to division": "Policy and Risk"
+  },
+  {
+   "Letter code": "IDR/KEP",
+   "Route to division": "Compliance"
+  },
+  {
+   "Letter code": "KEP/ING",
+   "Route to division": "Compliance"
+  },
+  {
+   "Letter code": "SBM/CMI",
+   "Route to division": "Compliance"
+  },
+  {
+   "Letter code": "SBM/GVD",
+   "Route to division": "Compliance"
+  },
+  {
+   "Letter code": "SBM/SNG",
+   "Route to division": "Compliance"
+  }
+ ]
+}

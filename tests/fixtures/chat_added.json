@@ -1,0 +1,6 @@
+{
+  "type": "ADDED_TO_SPACE",
+  "eventTime": "2026-10-26T01:00:00.000000Z",
+  "space": {"name": "spaces/AAAA", "type": "DM"},
+  "user": {"name": "users/1", "displayName": "Staff A", "email": "staff.a@example.com", "type": "HUMAN"}
+}

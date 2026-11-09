@@ -1,0 +1,213 @@
+{
+  "columns": [
+    "Staff ID",
+    "Name",
+    "Main division",
+    "Role",
+    "Internship end date",
+    "Capacity (1 = full time)",
+    "Weighted open load",
+    "Email",
+    "WhatsApp"
+  ],
+  "rows": [
+    {
+      "Staff ID": "S01",
+      "Name": "Staff A",
+      "Main division": "Policy and Risk",
+      "Role": "Staff",
+      "Internship end date": null,
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 3,
+      "Email": "staff.a@example.com",
+      "WhatsApp": "+852 5550 0001"
+    },
+    {
+      "Staff ID": "S02",
+      "Name": "Staff B",
+      "Main division": "Finance",
+      "Role": "Intern",
+      "Internship end date": "2027-03-31",
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 1,
+      "Email": "staff.b@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S03",
+      "Name": "Staff C",
+      "Main division": "Finance",
+      "Role": "Intern",
+      "Internship end date": "2027-03-31",
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 2,
+      "Email": "staff.c@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S04",
+      "Name": "Staff D",
+      "Main division": "Policy and Risk",
+      "Role": "Staff",
+      "Internship end date": null,
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 4,
+      "Email": "staff.d@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S05",
+      "Name": "Staff E",
+      "Main division": "Compliance",
+      "Role": "Intern",
+      "Internship end date": "2027-03-31",
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 1,
+      "Email": "staff.e@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S06",
+      "Name": "Staff F",
+      "Main division": "HR",
+      "Role": "Intern",
+      "Internship end date": "2027-03-31",
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 2,
+      "Email": "staff.f@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S07",
+      "Name": "Staff G",
+      "Main division": "Finance",
+      "Role": "Staff",
+      "Internship end date": null,
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 5,
+      "Email": "staff.g@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S08",
+      "Name": "Staff H",
+      "Main division": "Audit",
+      "Role": "Intern",
+      "Internship end date": "2027-03-31",
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 1,
+      "Email": "staff.h@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S09",
+      "Name": "Staff I",
+      "Main division": "Policy and Risk",
+      "Role": "Staff",
+      "Internship end date": null,
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 3,
+      "Email": "staff.i@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S10",
+      "Name": "Staff J",
+      "Main division": "Audit",
+      "Role": "Staff",
+      "Internship end date": null,
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 2,
+      "Email": "staff.j@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S11",
+      "Name": "Staff K",
+      "Main division": "Compliance",
+      "Role": "Manager",
+      "Internship end date": null,
+      "Capacity (1 = full time)": null,
+      "Weighted open load": 0,
+      "Email": "staff.k@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S12",
+      "Name": "Staff L",
+      "Main division": "Compliance",
+      "Role": "Intern",
+      "Internship end date": "2026-12-18",
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 1,
+      "Email": "staff.l@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S13",
+      "Name": "Staff M",
+      "Main division": "Policy and Risk",
+      "Role": "Staff",
+      "Internship end date": null,
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 2,
+      "Email": "staff.m@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S14",
+      "Name": "Staff N",
+      "Main division": "Finance",
+      "Role": "Staff",
+      "Internship end date": null,
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 3,
+      "Email": "staff.n@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S15",
+      "Name": "Staff O",
+      "Main division": "Compliance",
+      "Role": "Staff",
+      "Internship end date": null,
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 2,
+      "Email": "staff.o@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S16",
+      "Name": "Staff P",
+      "Main division": "HR",
+      "Role": "Staff",
+      "Internship end date": null,
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 1,
+      "Email": "staff.p@example.com",
+      "WhatsApp": "+852 5550 0016"
+    },
+    {
+      "Staff ID": "S17",
+      "Name": "Staff Q",
+      "Main division": null,
+      "Role": "Staff",
+      "Internship end date": null,
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 0,
+      "Email": "staff.q@example.com",
+      "WhatsApp": null
+    },
+    {
+      "Staff ID": "S18",
+      "Name": "Staff R",
+      "Main division": null,
+      "Role": "Intern",
+      "Internship end date": "2026-12-18",
+      "Capacity (1 = full time)": 1,
+      "Weighted open load": 0,
+      "Email": "staff.r@example.com",
+      "WhatsApp": null
+    }
+  ]
+}

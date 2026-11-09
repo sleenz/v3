@@ -1,0 +1,49 @@
+# Test, build, push and deploy on merge to main (Cloud Build trigger, configuration file
+# cloudbuild.yaml). The deploy step runs deploy/deploy.sh, so a trigger deploy and a manual one use
+# the same settings (Secret Manager secret grc-env-prod = deploy/env.prod.yaml) and the same
+# secrets (deploy/secrets.txt). By hand: gcloud builds submit --config cloudbuild.yaml
+#
+# _REGION, _REPO and _SERVICE must match deploy/config.sh (tests/test_deploy_config.py checks).
+substitutions:
+  _REGION: asia-southeast2
+  _REPO: cloud-run-source-deploy
+  _SERVICE: v2-git
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - id: test
+    name: python:3.12-slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        pip install -q -r requirements.txt &&
+        ruff check . && ruff format --check . &&
+        pytest -q
+
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${BUILD_ID}
+      - .
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: [push, "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${BUILD_ID}"]
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    env:
+      - PROJECT=${PROJECT_ID}
+    args:
+      - deploy/deploy.sh
+      - --image
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${BUILD_ID}
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${BUILD_ID}

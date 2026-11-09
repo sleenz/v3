@@ -1,0 +1,100 @@
+{
+ "columns": [
+  "Setting",
+  "Value"
+ ],
+ "rows": [
+  {
+   "Setting": "Effort: Small",
+   "Value": 1
+  },
+  {
+   "Setting": "Effort: Medium",
+   "Value": 2
+  },
+  {
+   "Setting": "Effort: Large",
+   "Value": 4
+  },
+  {
+   "Setting": "Support share",
+   "Value": 0.5
+  },
+  {
+   "Setting": "Overload threshold",
+   "Value": 10
+  },
+  {
+   "Setting": "Stale after (days)",
+   "Value": 5
+  },
+  {
+   "Setting": "Reminder time",
+   "Value": "09:00"
+  },
+  {
+   "Setting": "Leaving warning (days)",
+   "Value": 30
+  },
+  {
+   "Setting": "Unknown letter code",
+   "Value": "Needs review"
+  },
+  {
+   "Setting": "Manager email",
+   "Value": "manager@example.com"
+  },
+  {
+   "Setting": "Allowed email domain",
+   "Value": "example.com"
+  },
+  {
+   "Setting": "Gmail done label",
+   "Value": "GRC/Logged"
+  },
+  {
+   "Setting": "Recurring lead (days)",
+   "Value": 14
+  },
+  {
+   "Setting": "Default due (days)",
+   "Value": 7
+  },
+  {
+   "Setting": "AI provider",
+   "Value": "Off"
+  },
+  {
+   "Setting": "AI model",
+   "Value": "gemini-3.8-flash"
+  },
+  {
+   "Setting": "AI region",
+   "Value": "asia-southeast1"
+  },
+  {
+   "Setting": "Sender name",
+   "Value": "GRC Tracker"
+  },
+  {
+   "Setting": "Mask emails for AI",
+   "Value": "No"
+  },
+  {
+   "Setting": "Requester domains",
+   "Value": "example.co.id=BRI; example.go.id=OJK"
+  },
+  {
+   "Setting": "Known requesters",
+   "Value": "BRI, OJK, HKMA, Companies Registry"
+  },
+  {
+   "Setting": "Allowed senders",
+   "Value": "grc-manager@example.com, @example.com"
+  },
+  {
+   "Setting": "File storage",
+   "Value": "Drive"
+  }
+ ]
+}
