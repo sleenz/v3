@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field, SecretStr
 from app import clock
 from app.chat import logged_text, person_tasks_text
 from app.commands import parse_command
+from app.extract.prompt import assignee, overrides, parse_prompt
 from app.extract.rules import find_dates
 from app.gmail import GmailClient
 from app.jobs import personal_buckets
@@ -78,7 +79,8 @@ DEFAULT_DUE_FLAG = "No deadline found, default used"
 HELP_TEXT = (
     "I log GRC requests into the tracker.\n"
     "• Forward a request (text, PDF or photo). I log it 30 seconds later.\n"
-    "• Within those 30 seconds you can send *PROMPT: Assign this to <name>* or other notes, "
+    "• Within those 30 seconds you can send *PROMPT: Assign this to <name>*, add "
+    "*reviewer <name>* and *deadline 20 Nov* or *deadline 3 days from now*, or other notes, "
     "e.g. *PROMPT: this is the ATMR report*.\n"
     "• After logging I ask you to confirm the deadline: reply *YES* or the correct date.\n"
     "• *my tasks* – your open tasks. *help* – this message.\n"
@@ -115,13 +117,6 @@ _YES = frozenset(
         "ok betul",
     }
 )
-_PROMPT = re.compile(r"^\s*prompt\s*:?\s*(.*)$", re.IGNORECASE | re.DOTALL)
-_ASSIGN = re.compile(
-    r"\b(?:assign(?:ed)?|give|kasih(?:kan)?|tugaskan)\s+(?:this\s+|it\s+|ini\s+)?"
-    r"(?:to|ke|kepada)\s+([^\n.,;!?]+)",
-    re.IGNORECASE,
-)
-_POLITE_TAIL = re.compile(r"(?:\s+(?:please|pls|plz|ya+|thanks|thx|tq|ok|yah))+\s*$", re.I)
 
 
 # --- Meta Graph API and Cloud Tasks -------------------------------------------------------------
@@ -353,17 +348,7 @@ def parse_webhook(payload: dict[str, Any], phone_number_id: str) -> list[WAMessa
 # --- PROMPT ---------------------------------------------------------------------------------------
 
 
-def parse_prompt(text: str) -> str | None:
-    """The PROMPT's text, or None when the message is not a PROMPT."""
-    match = _PROMPT.match(text)
-    return match.group(1).strip() if match else None
-
-
-def assignee(prompt: str) -> str | None:
-    """The person named in "assign this to <name>" (the last one, if repeated)."""
-    names = [_POLITE_TAIL.sub("", found).strip() for found in _ASSIGN.findall(prompt)]
-    names = [name for name in names if name]
-    return names[-1] if names else None
+# parse_prompt and assignee live in app.extract.prompt (shared with email, section 21).
 
 
 # --- Processing -----------------------------------------------------------------------------------
@@ -682,10 +667,13 @@ def _apply_late_prompt(task_id: str, prompt: str, ctx: WaContext, now: datetime)
         return f"{task_id} is already approved; ask the GRC manager to change it."
     notes = "\n".join(part for part in (task.notes, f"Sender's PROMPT: {prompt}") if part)
     changes: dict[str, Any] = {"Notes": notes, "Last updated": now}
-    reply = f"Added your PROMPT to {task_id} as a note."
-    name = assignee(prompt)
+    replies: list[str] = []
+    audits: list[tuple[str, str, str]] = []
+    flags = list(task.flags)
+    asked = overrides(prompt, now.date())
+    name = asked.assign_to
     if name and match_staff_name(name, store.staff()) is None:
-        reply = f'I couldn\'t find "{name}" in the Staff tab; I only added your PROMPT as a note.'
+        replies.append(f'I couldn\'t find "{name}" in the Staff tab, so the owner is unchanged.')
     elif name:
         current = RouteResult(
             owner=task.owner or None,
@@ -694,24 +682,50 @@ def _apply_late_prompt(task_id: str, prompt: str, ctx: WaContext, now: datetime)
             rule=5,
             note=task.routing_note,
         )
-        routed = sender_assignment(current, name, store.staff(), now.date(), task.due_date)
-        flags = [f for f in task.flags if f != NEEDS_REVIEW_FLAG]
+        due = asked.due or task.due_date
+        routed = sender_assignment(current, name, store.staff(), now.date(), due)
+        flags = [f for f in flags if f != NEEDS_REVIEW_FLAG] + routed.flags
         changes.update(
             {
                 "Owner": routed.owner,
                 "Doer": routed.doer or routed.owner,
                 "Division": routed.division or task.division,
                 "Routing note": routed.note,
-                "Flag": "; ".join(dict.fromkeys([*flags, *routed.flags])),
             }
         )
-        reply = f"Updated {task_id}: proposed owner is now {routed.owner}."
+        replies.append(f"proposed owner is now {routed.owner}")
+        audits.append(("Owner", task.owner, str(routed.owner)))
+    if asked.reviewer:
+        person = match_staff_name(asked.reviewer, store.staff())
+        if person is None:
+            replies.append(f'I couldn\'t find reviewer "{asked.reviewer}" in the Staff tab.')
+        else:
+            changes.update({"Reviewer": person.name, "Needs review": "Yes"})
+            replies.append(f"reviewer is {person.name}")
+            audits.append(("Reviewer", task.reviewer, person.name))
+    if asked.due is not None:
+        flags = [f for f in flags if f not in (DEADLINE_FLAG, DEFAULT_DUE_FLAG)] + asked.flags
+        changes["Due date"] = asked.due
+        replies.append(f"due {_day(asked.due)}")
+        audits.append(("Due date", _day(task.due_date), _day(asked.due)))
+        store.edit_wa_pending(lambda rows: _close_question(rows, task_id, now))
+    changes["Flag"] = "; ".join(dict.fromkeys(flags))
     store.update_task(task_id, changes)
-    if "Owner" in changes:
-        _audit(store, task_id, "PROMPT applied", "Owner", task.owner, str(changes["Owner"]))
-    else:
-        _audit(store, task_id, "PROMPT applied", "Notes", "", "Sender's PROMPT added")
-    return reply + " Still waiting for manager approval."
+    for field, old, new in audits or [("Notes", "", "Sender's PROMPT added")]:
+        _audit(store, task_id, "PROMPT applied", field, old, new)
+    done = [part for part in replies if not part.startswith("I couldn't")]
+    problems = [part for part in replies if part.startswith("I couldn't")]
+    reply = f"Updated {task_id}: " + ", ".join(done) + "." if done else ""
+    reply = reply or f"Added your PROMPT to {task_id} as a note."
+    return " ".join([reply, *problems, "Still waiting for manager approval."])
+
+
+def _close_question(rows: list[WaPending], task_id: str, now: datetime) -> None:
+    """The sender set the deadline in a PROMPT: the "Reply YES" question no longer applies."""
+    for row in rows:
+        if row.kind == "confirm" and row.task_id == task_id and row.status == "open":
+            row.status = "done"
+            row.updated_at = now
 
 
 def _deadline_answer(message: WAMessage, text: str, ctx: WaContext, now: datetime) -> str | None:
@@ -861,7 +875,9 @@ def _log_draft(draft: WaPending, ctx: WaContext, now: datetime) -> str:
         sender_note=draft.prompt,
     )
     result = process_request(raw, ctx.services)
-    if result.created:
+    # A deadline typed in the PROMPT is the sender's own: no "Reply YES" question (section 21).
+    ask = result.created and overrides(draft.prompt, now.date()).due is None
+    if ask:
         flags = "; ".join(dict.fromkeys([*result.flags, DEADLINE_FLAG]))
         store.update_task(result.task_id, {"Flag": flags})
         stored = [a for a in attachments if a.data]
@@ -873,16 +889,18 @@ def _log_draft(draft: WaPending, ctx: WaContext, now: datetime) -> str:
                     "wa_files_not_kept",
                     extra={"task_id": result.task_id, "error_type": type(error).__name__},
                 )
-    _reply(ctx, draft.sender, _logged_reply(result, failed), result.task_id)
-    if result.created:
+    _reply(ctx, draft.sender, _logged_reply(result, failed, ask), result.task_id)
+    if ask:
         store.edit_wa_pending(lambda rows: _ask_deadline(rows, draft.sender, result.task_id, now))
     return result.task_id
 
 
-def _logged_reply(result: TaskResult, failed: list[str]) -> str:
+def _logged_reply(result: TaskResult, failed: list[str], ask: bool = True) -> str:
     due = _day(result.due_date)
     if not result.created:
         question = ""
+    elif not ask:
+        question = f"\n\nDeadline: {due}, as in your PROMPT."
     elif DEFAULT_DUE_FLAG in result.flags:
         question = (
             f"\n\nNo deadline found, so I set {due}. Reply *YES* to keep it, or send the "

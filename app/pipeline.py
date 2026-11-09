@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 
 from app import clock
 from app.drive import DriveStore, folder_name
+from app.extract import prompt as sender_prompt
 from app.extract import rules
 from app.extract.ai import PDFS_SKIPPED_FLAG, AIProvider, pdf_documents, run_ai
 from app.extract.clean import (
@@ -26,7 +27,7 @@ from app.extract.clean import (
     unwrap_forward,
 )
 from app.models import AuditEntry, Contact, RawRequest, Task, TaskResult
-from app.route import route, sender_assignment
+from app.route import match_staff_name, route, sender_assignment
 from app.sheets import SheetStore
 
 logger = logging.getLogger("grc.pipeline")
@@ -88,6 +89,14 @@ def _files_note(raw: RawRequest) -> str:
     return f"Not stored: {names}"
 
 
+PROMPT_NOT_STAFF_FLAG = "PROMPT ignored: sender is not in Staff"
+
+
+def _is_staff(store: SheetStore, email: str) -> bool:
+    wanted = email.strip().lower()
+    return bool(wanted) and any(p.email.strip().lower() == wanted for p in store.staff())
+
+
 def _unique_contacts(contacts: list[Contact]) -> list[Contact]:
     seen: set[str] = set()
     unique = []
@@ -117,14 +126,30 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
         unwrapped = unwrap_forward(original, raw.sender_name, raw.sender_email)
     else:
         unwrapped = Unwrapped(original, raw.sender_name, raw.sender_email, "", None, False)
+
+    # 2b. An email PROMPT (DESIGN section 21): the first paragraph the sender typed, above a
+    # forward or at the top of a new email. Only a Staff member's PROMPT counts.
+    note = raw.sender_note.strip()
+    if raw.source == "Email" and not note:
+        typed = unwrapped.manager_note if unwrapped.forwarded else unwrapped.body
+        found, rest = sender_prompt.split_email_prompt(typed or "")
+        if found and _is_staff(store, raw.sender_email):
+            note = found
+            if unwrapped.forwarded:
+                unwrapped = replace(unwrapped, manager_note=rest.strip() or None)
+            else:
+                unwrapped = replace(unwrapped, body=rest)
+        elif found:
+            flags.append(PROMPT_NOT_STAFF_FLAG)
+    asked = sender_prompt.overrides(note, today) if note else sender_prompt.PromptOverrides()
     body = unwrapped.body
 
     # 3-4. Clean (light for rules, full for title/routing/AI) and mask the AI copy.
     light = strip_noise(body)
     cleaned = clean_text(body)
     masked = mask_text(cleaned, mask_emails=config.mask_emails_for_ai)
-    # A WhatsApp PROMPT (v1.3) guides the AI only; the rules read the forwarded request alone.
-    note = raw.sender_note.strip()
+    # The PROMPT guides the AI; the rules read the forwarded request alone, except for the
+    # overrides the PROMPT states (assignee, reviewer, deadline), read by fixed rules.
     ai_text = masked
     quote_text = light
     if note:
@@ -135,8 +160,12 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
     # 5. Rules.
     letter = rules.letter_ref(light)
     due = rules.due_date(light, today)
-    flags.extend(due.flags)
     due_date = due.value
+    if asked.due is not None:  # the sender's deadline beats the message, the PDF and the AI
+        due_date = asked.due
+        flags.extend(asked.flags)
+    else:
+        flags.extend(due.flags)
     contacts = rules.contacts(light)
     if unwrapped.forwarded and unwrapped.sender_email:
         sender = Contact(name=unwrapped.sender_name or None, email=unwrapped.sender_email)
@@ -183,7 +212,7 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
             summary = ai.summary_en.strip()
             deliverables = [item.strip() for item in ai.deliverables if item.strip()]
             ai_catalog_id = ai.catalog_id if ai.catalog_id != "NONE" else None
-            if ai.deadline is not None:
+            if ai.deadline is not None and asked.due is None:
                 if due_date is None:
                     due_date = ai.deadline
                 elif ai.deadline != due_date:
@@ -229,9 +258,21 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
         ai_catalog_id=ai_catalog_id,
         known_catalog_id=raw.catalog_id,
     )
-    if raw.assign_to:
-        routed = sender_assignment(routed, raw.assign_to, store.staff(), today, due_date)
+    assign_to = raw.assign_to or asked.assign_to
+    if assign_to:
+        routed = sender_assignment(
+            routed, assign_to, store.staff(), today, due_date, channel=raw.source
+        )
     flags.extend(routed.flags)
+    reviewer = ""
+    if asked.reviewer:
+        person = match_staff_name(asked.reviewer, store.staff())
+        if person is None:
+            flags.append(f'PROMPT: reviewer "{asked.reviewer}" not found in Staff')
+        else:
+            reviewer = person.name
+            if reviewer == (routed.doer or routed.owner):
+                flags.append("PROMPT: the reviewer is also the Doer")
 
     # 10. Write the row, then AuditLog.
     cell_text = original
@@ -266,6 +307,8 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
         deliverables="\n".join(f"- {item}" for item in deliverables),
         contacts="; ".join(contact.label() for contact in contacts),
         source_id=raw.source_id,
+        needs_review="Yes" if reviewer else "",
+        reviewer=reviewer,
     )
     saved, created = store.append_task(task)
     if not created:
