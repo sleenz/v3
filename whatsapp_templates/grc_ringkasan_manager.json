@@ -1,0 +1,13 @@
+{
+  "name": "grc_ringkasan_manager",
+  "language": "id",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "Ringkasan tim GRC hari ini: {{1}} terlambat, {{2}} jatuh tempo hari ini, {{3}} menunggu review, {{4}} menunggu persetujuan, {{5}} terhambat. Ketuk Lihat tugas untuk detail.",
+      "example": {"body_text": [["3", "2", "1", "4", "0"]]}
+    },
+    {"type": "BUTTONS", "buttons": [{"type": "QUICK_REPLY", "text": "Lihat tugas"}]}
+  ]
+}

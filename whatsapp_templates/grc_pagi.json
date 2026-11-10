@@ -1,0 +1,13 @@
+{
+  "name": "grc_pagi",
+  "language": "id",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "Selamat pagi {{1}}. Ada {{2}} tugas GRC yang perlu perhatian hari ini: {{3}}. Ketuk Lihat tugas untuk detail.",
+      "example": {"body_text": [["Rina", "2", "G-0012, G-0015"]]}
+    },
+    {"type": "BUTTONS", "buttons": [{"type": "QUICK_REPLY", "text": "Lihat tugas"}]}
+  ]
+}

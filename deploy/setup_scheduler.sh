@@ -18,17 +18,25 @@ fi
 gcloud run services add-iam-policy-binding "$SERVICE" --project "$PROJECT" --region "$REGION" \
   --member "serviceAccount:$SCHEDULER_SA" --role roles/run.invoker --quiet >/dev/null
 
-# name | schedule | path. "*/5 8-19" runs 08:00-19:55. The WhatsApp reminder job runs every
-# 30 minutes on weekdays and the app sends once, at the first run after Config "Reminder time".
+# name | schedule | path. "*/5 8-19" runs 08:00-19:55. The reminder job (DESIGN section 22)
+# runs every 15 minutes on weekdays; the app decides what is due from the Config times, sends
+# nothing outside 09:45-19:00 (Workday end) and skips holidays.
 jobs=(
   "grc-gmail|*/10 * * * *|/jobs/gmail"
   "grc-changes|*/5 8-19 * * *|/jobs/changes"
   "grc-recurring|0 7 * * *|/jobs/recurring"
-  "grc-digest|0 9 * * 1-5|/jobs/digest"
-  "grc-wa-reminders|*/30 7-19 * * 1-5|/jobs/wa-reminders"
+  "grc-reminders|*/15 9-19 * * 1-5|/jobs/reminders"
   "grc-wa-drafts|*/10 * * * *|/jobs/wa-drafts"
   "grc-gmail-watch|23 6 * * *|/jobs/gmail-watch"
 )
+# Replaced by grc-reminders: delete them if an earlier setup created them.
+for old in grc-digest grc-wa-reminders; do
+  if gcloud scheduler jobs describe "$old" --project "$PROJECT" --location "$REGION" \
+    >/dev/null 2>&1; then
+    gcloud scheduler jobs delete "$old" --project "$PROJECT" --location "$REGION" --quiet
+    echo "deleted $old (replaced by grc-reminders)"
+  fi
+done
 for job in "${jobs[@]}"; do
   IFS='|' read -r name schedule path <<<"$job"
   args=(

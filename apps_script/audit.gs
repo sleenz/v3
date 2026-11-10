@@ -16,6 +16,8 @@
  * Setup (once, by someone who can edit the protected AuditLog tab):
  *   Extensions → Apps Script → paste this file → run installAuditTrigger() → accept permissions.
  *   Then run installValidation() once: dropdowns for Status, Needs review and Reminder profile.
+ *   (v1.4 part 2) Run installServiceTabs() once: it adds the hidden tabs the reminder schedule
+ *   needs (DESIGN section 22) with their headers, and hides them. Existing tabs are left alone.
  * Do NOT rename onMasterEdit to onEdit: a simple trigger cannot see the editor's email and
  * would run a second time next to the installable one.
  */
@@ -33,6 +35,25 @@ var DROPDOWNS = {
   'Needs review': ['Yes', 'No'],
   'Reminder profile': ['Standard', 'Light', 'Off']
 };
+
+// Hidden service tabs (DESIGN section 22); headers must match app/models.py SERVICE_TABS.
+var SERVICE_TABS = {
+  '_outbox': ['Sent at', 'Channel', 'Message ID', 'Thread ID', 'Person', 'Task IDs', 'Kind'],
+  '_reminders_sent': ['Date', 'Rule', 'Task ID', 'Person', 'Channel', 'Sent at'],
+  '_event_queue': ['Queued at', 'Kind', 'Task ID', 'Note']
+};
+
+/** Add the missing hidden service tabs with their headers (run once; safe to run again). */
+function installServiceTabs() {
+  var book = SpreadsheetApp.getActive();
+  Object.keys(SERVICE_TABS).forEach(function (name) {
+    if (book.getSheetByName(name)) return;
+    var sheet = book.insertSheet(name);
+    sheet.getRange(1, 1, 1, SERVICE_TABS[name].length).setValues([SERVICE_TABS[name]]);
+    sheet.setFrozenRows(1);
+    sheet.hideSheet();
+  });
+}
 
 /** Dropdown validation on Master for the v1.4 columns (run once, and after adding columns). */
 function installValidation() {
