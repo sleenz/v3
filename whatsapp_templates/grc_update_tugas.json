@@ -1,0 +1,13 @@
+{
+  "name": "grc_update_tugas",
+  "language": "id",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "Update tugas GRC {{1}}: {{2}}. Ketuk Lihat tugas untuk detail.",
+      "example": {"body_text": [["G-0012", "dikirim untuk review, due 20 Nov 2026"]]}
+    },
+    {"type": "BUTTONS", "buttons": [{"type": "QUICK_REPLY", "text": "Lihat tugas"}]}
+  ]
+}
