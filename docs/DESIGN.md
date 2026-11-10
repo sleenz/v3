@@ -37,7 +37,7 @@ everyone. Every change is logged.
 | D6 | AI goes through one interface, `AIProvider.extract(text, catalog) -> AIResult`, with two implementations: `GeminiProvider` (the `google-genai` SDK in either **API-key mode**, key from Secret Manager, or **Vertex mode**) and `NullProvider`. Chosen by the Config setting `AI provider` (`Gemini API key` / `Vertex` / `Off`). Version 1 uses API-key mode. |
 | D7 | Google Chat app over HTTP to `POST /chat`; synchronous replies; Google-signed token verified on every call. |
 | D8 | Edits made by hand in the sheet are audited by a small Apps Script edit trigger (`apps_script/audit.gs`), because only Apps Script sees the editor's identity. The service writes its own actions to AuditLog. |
-| D9 | Approvals and handoffs are detected by comparing `Master` with a hidden `_state` tab every 5 minutes. |
+| D9 | Approvals and handoffs are detected by comparing `Master` with a hidden `_state` tab every 2 minutes (5 until 10 Nov 2026). |
 | D10 | Timed jobs: Cloud Scheduler with OIDC tokens → `POST /jobs/*`. |
 | D11 | Time zone `Asia/Hong_Kong` everywhere. Dates are stored as real sheet dates. |
 | D12 | Original message: up to 45,000 characters in the `Original message` cell (Sheets limit is 50,000); the full text is always saved as `original.txt` in the task folder. |
@@ -252,7 +252,7 @@ or `NONE`), `language: "id" | "en" | "mixed"`.
 | `POST /jobs/gmail` | Scheduler | every 10 min | Up to 20 unread inbox messages: allowed sender → `process_request`; other sender → label `GRC/Ignored` |
 | `POST /jobs/gmail-push` **(v1.4)** | Pub/Sub push | on new mail | Answer 204 at once, then the same inbox run (section 20). Never overlaps another run |
 | `POST /jobs/gmail-watch` **(v1.4)** | Scheduler | daily 06:23 | Renew Gmail's push to the topic (it lapses after 7 days) |
-| `POST /jobs/changes` | Scheduler | every 5 min, 08:00–20:00 | Compare Master with `_state`; send assignment emails (section 8); update `_state` |
+| `POST /jobs/changes` | Scheduler | every 2 min, 08:00–19:58 (emails only in working hours, section 22) | Compare Master with `_state`; send assignment emails (section 8); update `_state` |
 | `POST /jobs/recurring` | Scheduler | daily 07:00 | **(v1.4 part 3)** Create each Recurring tab row's task once per deadline, `Create days before` it (section 20) |
 | `POST /jobs/reminders` **(v1.4 part 2)** | Scheduler | weekdays every 15 min, 09:00–19:45 | Reminder schedule and queued notices (section 22) |
 | `POST /jobs/digest` | — | replaced | Sends nothing since section 22 (kept so an old Scheduler job is harmless) |
