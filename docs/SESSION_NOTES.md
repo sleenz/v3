@@ -3,7 +3,7 @@
 Read this first, then `CLAUDE.md` and `docs/DESIGN.md` (the spec; section numbers below refer to
 it). Real team names, emails and the bot address live only in the Sheet and in chat, never here.
 
-Last updated: 9 Nov 2026 (moved to a new repository).
+Last updated: 10 Nov 2026 (reminder schedule, part A of DESIGN section 22).
 
 ## 1. What exists
 
@@ -80,24 +80,21 @@ Shell, or create a new trigger on the new repository with `cloudbuild.yaml`.
   - D4: Gmail push via Pub/Sub, with the 10-minute run kept as a safety net.
   - D5: both in one PR.
 
-## 4. Still to build: v1.4 part 2, the reminder engine (start only when the user says go)
+## 4. v1.4 part 2: reminder schedule and replies (DESIGN section 22, approved 10 Nov 2026)
 
-The spec was agreed in the 4 Nov plan:
-- a `Reminder rules` tab with seeded rules;
-- hidden tabs `_reminders_sent` and `_wa_window`, and a "Status since" column in `_state`;
-- working days and a Config `Holidays` list;
-- one combined message per person per channel;
-- WhatsApp templates with a **Lihat** button (handled as a `button` message plus a `view` row in
-  `_wa_pending`);
-- fallback from WhatsApp to email, both on immediate rejection and on a later "failed" status
-  webhook;
-- `/jobs/reminders`, replacing the digest and the WhatsApp reminder;
-- Config `WA templates`, `WA template language` and `Send files via WhatsApp`;
-- `whatsapp_templates/*.json`;
-- Staff `Reminder channel` and `WhatsApp opt-in` (opt-in is free text now);
-- Master `Reminder profile` (the column exists and is unused).
+The 4 Nov part-2 plan was replaced by the 10 Nov plan (section 22; decisions 1–9 accepted as
+recommended). Built in three PRs, one at a time on the same branch:
+- **A (built):** `/jobs/reminders` every 15 minutes (morning 10:00, manager 10:15, due today
+  14:00, last call 16:30; working days; Config `Holidays`; `Max reminders per day` with merge),
+  `_outbox`, `_reminders_sent`, `_event_queue` (notices outside working hours wait for Workday
+  start), WhatsApp templates in `whatsapp_templates/`, replies to reminder emails never become
+  new requests. `/jobs/digest` and `/jobs/wa-reminders` now send nothing.
+- **B (next):** WhatsApp buttons and lists, `_conversations`, `_wa_window`, ProgressLog,
+  blocked, extension, snooze, undo, permissions, intake-versus-update routing.
+- **C (after B):** typed replies read by Gemini first (`prompts/reply_v1.md`), the rules as
+  fallback, confirmation before any typed change.
 
-The Recurring tab's `Reminder profile` column also waits for part 2.
+WhatsApp is not live yet: `WA_ACCESS_TOKEN` and `WA_APP_SECRET` have no value saved.
 
 ## 5. Things learned the hard way (troubleshooting)
 

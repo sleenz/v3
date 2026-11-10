@@ -254,12 +254,13 @@ or `NONE`), `language: "id" | "en" | "mixed"`.
 | `POST /jobs/gmail-watch` **(v1.4)** | Scheduler | daily 06:23 | Renew Gmail's push to the topic (it lapses after 7 days) |
 | `POST /jobs/changes` | Scheduler | every 5 min, 08:00–20:00 | Compare Master with `_state`; send assignment emails (section 8); update `_state` |
 | `POST /jobs/recurring` | Scheduler | daily 07:00 | **(v1.4 part 3)** Create each Recurring tab row's task once per deadline, `Create days before` it (section 20) |
-| `POST /jobs/digest` | Scheduler | weekdays 09:00 | Personal and manager digests |
+| `POST /jobs/reminders` **(v1.4 part 2)** | Scheduler | weekdays every 15 min, 09:00–19:45 | Reminder schedule and queued notices (section 22) |
+| `POST /jobs/digest` | — | replaced | Sends nothing since section 22 (kept so an old Scheduler job is harmless) |
 | `POST /chat` | Google Chat | on event | Section 8 |
 | `GET/POST /wa/webhook` **(v1.3)** | Meta | on event | Verification handshake; signed messages → Cloud Tasks queue `wa-process` (section 17) |
 | `POST /tasks/wa-process` **(v1.3)** | Cloud Tasks | on event | One WhatsApp message, or the logging of a draft 30 s later |
 | `POST /jobs/wa-drafts` **(v1.3)** | Scheduler | every 10 min | Log drafts whose Cloud Task never ran; prune old rows |
-| `POST /jobs/wa-reminders` **(v1.3)** | Scheduler | weekdays, every 30 min 07:00–19:30 | Daily WhatsApp reminder template, once, at the first run after Config `Reminder time` |
+| `POST /jobs/wa-reminders` **(v1.3)** | — | replaced | Sends nothing since section 22 |
 | `GET /healthz` | anyone | — | 200 OK, no data |
 | `GET /health` **(v1.2)** | anyone | — | Same as `/healthz`; use this one on Cloud Run, which reserves some paths ending in "z" |
 
@@ -281,6 +282,7 @@ open task. Record `Notified doer` and `Notified at` in `_state` so each assignme
 note, AI summary and deliverables (if any), the Files link, the sheet link, then the **full original
 message** under a divider. Plain text plus simple HTML.
 
+**(Replaced by the reminder schedule, section 22; kept for reference.)**
 **Personal digest** (09:00, only if non-empty): overdue, due within 7 days, In Progress with
 `Last updated` older than `Stale after (days)`. Proposed tasks are excluded.
 **Manager digest:** awaiting approval, all overdue, people over the load threshold, interns leaving
@@ -777,3 +779,107 @@ reads a PROMPT for who or when).
    with one AuditLog `PROMPT applied` row per field changed.
 7. Not covered: a PROMPT in an email reply to an already-logged thread is added to Notes like any
    reply; use the `assign … to …` command there.
+
+## 22. Reminder schedule and replies (v1.4 part 2; approved by the project owner, 10 Nov 2026)
+
+Replaces section 8's 09:00 digests and section 17's daily WhatsApp reminder. Built in three
+parts: **A** (schedule, outbox, notice queue, templates: built), **B** (WhatsApp buttons and
+lists, `_conversations`, ProgressLog, blocked, extension, snooze, undo, permissions) and **C**
+(typed replies read by the LLM first, the rules as fallback). Decisions 1–9 of the 10 Nov plan
+were accepted as recommended; they are folded in below.
+
+**Schedule (part A, `app/reminders.py` pure, `app/schedule.py` the run).** Asia/Hong_Kong,
+working days only: Monday–Friday, not a Config `Holidays` date.
+- Config (all optional, defaults shown): `Workday start` 10:00, `Workday end` 19:00,
+  `Reminder time morning` 10:00, `Reminder time manager` 10:15, `Reminder time due today` 14:00,
+  `Reminder time last call` 16:30, `Max reminders per day` 3, `Holidays` (dates separated by
+  `;`), `Remind days before due` 7, 3, 1. `Stale after (days)` stays. `Reminder time` is retired.
+- Cloud Scheduler `grc-reminders` calls `POST /jobs/reminders` every 15 minutes on weekdays; the
+  app decides. Each slot is processed once per working day (a `slot:<name>` row with Person `*`
+  in `_reminders_sent`), at the first run at or after its time and before `Workday end`.
+- **Morning:** one message per person combining every rule that fired for them: due in N days
+  (N in `Remind days before due`) and overdue (to the Doer), not updated for `Stale after
+  (days)` (Not Started, In Progress or Returned, by `Last updated`, else `Start / received`; to
+  the Doer), waiting for review (In Review; to the reviewer, section 19).
+- **Manager (10:15):** the team summary to every Manager in Staff (none: Config `Manager
+  email`): overdue, due today, waiting for review, awaiting approval (Proposed), blocked (On
+  Hold), plus section 8's manager extras (load threshold, interns leaving, AI unavailable,
+  Recurring rows skipped).
+- **Due today (14:00):** tasks due today that are not Done, to the Doer and the Owner.
+  **Last call (16:30):** the same, plus every Manager.
+- **Cap:** at most `Max reminders per day` reminder messages per person per day; the manager
+  summary and event notices do not count (decision 6). Triggers over the cap, or whose send
+  failed, are kept in `_reminders_sent` without `Sent at` and merged into the person's next
+  scheduled message (the next working day's morning when none is left that day); a deferred
+  rule is relabelled to how things stand then (yesterday's "due today" is overdue).
+- **Never twice:** rule + task + person is sent at most once per date (`_reminders_sent`:
+  `Date`, `Rule`, `Task ID`, `Person`, `Channel`, `Sent at`; rows kept 21 days).
+- `Reminders paused` = Yes: nothing is sent and nothing kept.
+- Proposed and Done tasks are never reminded (Proposed appears in the manager summary).
+
+**Channels.** Staff `Reminder channel` (`Email` / `WhatsApp`); blank = WhatsApp when the person
+has a `WhatsApp` number and `WhatsApp opt-in` is filled (not `No`), else email. WhatsApp
+reminders are templates (they work outside the 24-hour window), each with one quick-reply
+button **Lihat tugas** whose payload is `view:<slot>:<yyyy-mm-dd>` (part B handles the tap). A
+failed WhatsApp send falls back to email; an email reminder lists the tasks by rule and how to
+reply. Templates (`whatsapp_templates/*.json`, category Utility, language `id`): `grc_pagi`,
+`grc_jatuh_tempo`, `grc_ringkasan_manager`. Template parameters are one line (no line breaks).
+
+**Event notices outside working hours (`app/events.py`).** Assigned, review requested,
+approved, returned (part B adds blocked and extension) go out at once between `Workday start`
+and `Workday end` on a working day. At any other time they wait in `_event_queue` (`Queued at`,
+`Kind`, `Task ID`, `Note`) and `/jobs/reminders` sends them at the next Workday start, by email
+and WhatsApp alike (decision 7). Assignment emails from `/jobs/changes` simply stay pending
+until a run inside working hours. If the queue tab is missing the notice is sent at once (D15).
+
+**Outbox (`app/outbox.py`).** Every message the bot sends (reminders, notices, assignment
+emails, command replies, WhatsApp replies) is a `_outbox` row: `Sent at`, `Channel`, `Message
+ID` (WhatsApp wamid or Gmail message id), `Thread ID` (Gmail), `Person`, `Task IDs`, `Kind`;
+rows older than 60 days may be pruned. A Staff email reply in a thread whose bot messages name
+exactly one task acts on that task (commands need no ID); a reply in a bot thread that is not a
+command is added to that task's Notes, or answered with how to update. **It is never logged as a
+new request.** The hidden tabs come from the Apps Script `installServiceTabs()`; `/health`
+warns while one is missing.
+
+**Part B (approved, to build).** The tap on **Lihat tugas** opens the 24-hour window: up to 5
+task cards (earliest due first; the rest as a list), each "<ID> – <title>, due <date> (<n>
+days), progress <p>%, <status>" with [Update progres] [Kirim review | Selesai] [Lainnya].
+Update progres → list 25/50/75/90/100% → saved. Lainnya → list: Selesai (asks for proof),
+Terhambat (asks the reason), Minta perpanjangan (asks the date), Ingatkan besok, Lihat file.
+Reviewer: [Approve] [Return]; Manager: [Setuju] [Tolak] for extensions. Multi-step answers use
+hidden `_conversations` (Person, Channel, Pending action, Task ID, Value, Started at, Expires at;
+30 minutes, then the bot says so and stops). `_wa_window` keeps each person's last inbound time:
+notices inside the window are interactive messages, outside it the template `grc_update_tugas`.
+Reply mapping order: button id (e.g. `progress:G-0012:50`), `context.id` → `_outbox`, Gmail
+thread → `_outbox`, a task ID in the text, the LLM's task (part C), the person's only open task;
+else a list of their open tasks (at most 10, earliest due first). Button and list taps are
+parsed by code only, never sent to the AI, and save directly (decision 2).
+Typed WhatsApp text (decision 1): a forwarded message, a message starting `PROMPT` and a file
+not replying to anything are intake (section 17); any other text from someone with open tasks
+is a reply. Updates: progress sets Progress and Last updated (Not Started → In Progress);
+blocked → On Hold with the reason (Notes), Owner and Manager notified; extension → the Manager
+decides, the due date changes only on Setuju; review and done use section 19 (Done keeps its
+`Link`-already-filled exception, decision 4); snooze skips that task's reminders for that
+person until a date (at most 2 working days, never past the due date; hidden `_snooze`); undo
+reverses the person's last change on that task within 24 hours from ProgressLog (field values
+only; notices already sent stay sent; not for approve/return, decision 9). Every change: a
+**ProgressLog** row (Timestamp, Task ID, Person, Channel, Field, Old value, New value, Note,
+Message ID) and AuditLog. Permissions: Doer, Owner, Manager may update, block, snooze, send for
+review, mark done and ask for an extension; reviewer or Manager approve or return; Manager only
+approves extensions; delegation stays as section 19 (decision 3). Unknown senders are refused;
+incoming messages are deduped by message id.
+
+**Part C (approved, to build).** Typed text (WhatsApp and email replies) goes to the LLM first
+(`prompts/reply_v1.md`, versioned, at least 10 Indonesian/English examples) with the masked
+text, the person's role, their open tasks (ID, title, due date, status, progress, needs review),
+the task already linked by context or thread, and today's date. Output, validated with pydantic:
+`task_id` (one of the given tasks or null), `intent` (progress, blocked, extension, review, done,
+snooze, note, question, list, help, request, unknown), `progress` 0–100 or null, `note`,
+`requested_date`, `reply_to_user` (short, in the user's language), `confidence` 0–1. The rules
+(section 19 commands plus `70%`, `G-0012 70`, `setengah`, `snooze`/`besok aja`, `undo`, `help`)
+take over when the AI is Off, fails or times out (8 s, one retry), returns invalid JSON or
+confidence < 0.6; if they find nothing, the bot sends the task list or help. No typed change is
+written without confirmation (WhatsApp [Ya] [Ubah] [Batal]; email "Reply YES to confirm");
+questions are answered from the sheet at once. Logged per call: provider, model, prompt
+version, latency, confidence, fallback; never the text.
+

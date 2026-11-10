@@ -18,7 +18,9 @@ Google Chat message ──────┘   clean · rules · (AI)  └─> Driv
 Manager sets Status ──> /jobs/changes (every 5 min) ──> assignment email to the Doer
 New mail ──> Gmail push (Pub/Sub) ──> /jobs/gmail-push: logged within about a minute
 Cloud Scheduler ──> /jobs/gmail (10 min, safety net) · /jobs/recurring (07:00, Recurring tab)
-                    · /jobs/digest (weekdays 09:00) · /jobs/gmail-watch (daily)
+                    · /jobs/reminders (weekdays every 15 min: 10:00 morning, 10:15 manager,
+                      14:00 due today, 16:30 last call; notices wait for working hours)
+                    · /jobs/gmail-watch (daily)
 Hand edits in Master ──> Apps Script trigger ──> AuditLog, Last updated, "Done needs proof"
 ```
 
@@ -30,6 +32,9 @@ Hand edits in Master ──> Apps Script trigger ──> AuditLog, Last updated,
 | `app/route.py` | routing rules 1–5 |
 | `app/sheets.py`, `app/drive.py`, `app/gmail.py`, `app/chat.py` | Google APIs behind small classes |
 | `app/jobs.py` | change detection, recurring tasks, digests |
+| `app/reminders.py`, `app/schedule.py` | reminder rules on working days (pure) and the `/jobs/reminders` run |
+| `app/outbox.py`, `app/events.py` | `_outbox` (what the bot sent, for reply mapping) and the after-hours notice queue |
+| `whatsapp_templates/` | the WhatsApp templates to submit in WhatsApp Manager |
 | `app/recurring.py` | Recurring tab schedule: deadlines, titles, who owns them (pure) |
 | `app/auth.py`, `app/logs.py`, `app/alerts.py` | token checks, JSON logs, alert emails |
 | `apps_script/audit.gs` | edit trigger for the sheet (installed by hand, step 10) |
@@ -228,6 +233,34 @@ one alert. Against `GRC_Tracker_Tabs_v2.xlsx` that means:
 - [ ] Check with the bot: the manager sends `recurring` (WhatsApp, or the first line of an email
       reply) to see every row's next deadline and any row that cannot be used.
 
+### 1d. Reminder schedule (DESIGN section 22)
+Replaces the 09:00 digest and the old daily WhatsApp reminder.
+- [ ] Apps Script: paste the new `apps_script/audit.gs` and run **`installServiceTabs()`** once.
+      It adds the hidden tabs `_outbox`, `_reminders_sent` and `_event_queue` with their headers.
+      Protect them like `_state`. Until they exist, `/health` lists them as warnings and reminders
+      do not run.
+- [ ] Config (all optional; the defaults are shown; edit any time, no deploy needed):
+
+      | Setting | Default | Meaning |
+      |---|---|---|
+      | `Workday start` | `10:00` | Event notices (assigned, review…) go out only from here… |
+      | `Workday end` | `19:00` | …until here; otherwise they wait for the next Workday start |
+      | `Reminder time morning` | `10:00` | One message per person: due in N days, overdue, not updated, review waiting |
+      | `Reminder time manager` | `10:15` | Team summary to every Manager in Staff |
+      | `Reminder time due today` | `14:00` | Due today, not done yet → Doer and Owner |
+      | `Reminder time last call` | `16:30` | Last call → Doer, Owner and the Manager |
+      | `Max reminders per day` | `3` | Per person (summary and event notices not counted); the rest merges into the next message |
+      | `Holidays` | *(blank)* | Days off, e.g. `2026-12-25; 2027-01-01` (also `25/12/2026`) |
+      | `Remind days before due` | `7, 3, 1` | Days before the deadline that the morning message mentions a task |
+
+      `Stale after (days)` (existing) is the "not updated" rule. `Reminder time` is no longer used.
+- [ ] Staff: `Reminder channel` (`Email` or `WhatsApp`; blank = WhatsApp when the person has a
+      `WhatsApp` number and `WhatsApp opt-in` is filled, else email) and `WhatsApp opt-in`
+      (`Yes` or the date the person agreed). `Reminders paused` = `Yes` still stops everything.
+- [ ] Scheduler: run `deploy/setup_scheduler.sh` (adds `grc-reminders`, deletes `grc-digest` and
+      `grc-wa-reminders`).
+- [ ] WhatsApp only: submit the three templates in `whatsapp_templates/` (section 9b).
+
 ### 2. Google Cloud project and APIs
 - [ ] Done by `deploy/setup_gcp.sh` (APIs, Artifact Registry `cloud-run-source-deploy`, Cloud Tasks
       queue `wa-process`). For `AI provider = Vertex` also enable `aiplatform.googleapis.com`.
@@ -321,9 +354,10 @@ curl https://v2-git-1085688466076.asia-southeast2.run.app/health
 
 ### 8. Cloud Scheduler (all times Asia/Hong_Kong)
 - [ ] `deploy/setup_scheduler.sh` creates or updates: `grc-gmail` (every 10 min), `grc-changes`
-      (every 5 min, 08:00–19:55), `grc-recurring` (daily 07:00), `grc-digest` (weekdays 09:00),
-      `grc-wa-reminders` (weekdays every 30 min, 07:00–19:30; the app sends once after Config
-      `Reminder time`), `grc-wa-drafts` (every 10 min) and `grc-gmail-watch` (daily 06:23).
+      (every 5 min, 08:00–19:55), `grc-recurring` (daily 07:00), **`grc-reminders`** (weekdays
+      every 15 min, 09:00–19:45; the app decides what is due from the Config times, section 1d),
+      `grc-wa-drafts` (every 10 min) and `grc-gmail-watch` (daily 06:23). It deletes the old
+      `grc-digest` and `grc-wa-reminders` jobs (their endpoints now send nothing).
       Each sends an OIDC token of `grc-tracker-scheduler` whose audience is `SERVICE_URL`.
 - [ ] **Instant email** (DESIGN section 20): the same script creates the Pub/Sub push
       subscription `grc-gmail-push` (to `/jobs/gmail-push`) and starts Gmail's push at once.
@@ -357,10 +391,19 @@ BRI does this part in Meta; the service only needs the IDs and two secrets after
 - [ ] WhatsApp → Configuration → Webhook: callback URL
       `https://v2-git-1085688466076.asia-southeast2.run.app/wa/webhook`, the verify token above,
       then subscribe to the **messages** field.
-- [ ] WhatsApp → Message templates → create `grc_daily_reminder`, category *Utility*, language
-      *English*, body:
-      `Hi {{1}}, your GRC tasks today: {{2}} overdue, {{3}} due within 7 days, {{4}} in progress
-      but not updated recently. Open the tracker: {{5}}` — and wait for Meta's approval.
+- [ ] WhatsApp Manager → Message templates → create the three templates in
+      `whatsapp_templates/` exactly as written there: category *Utility*, language
+      *Indonesian* (`id`), the body text with its example values, and one **quick-reply** button
+      `Lihat tugas`. Wait for Meta's approval (until then the reminder falls back to email):
+      - `grc_pagi` (morning): "Selamat pagi {{1}}. Ada {{2}} tugas GRC yang perlu perhatian hari
+        ini: {{3}}. Ketuk Lihat tugas untuk detail."
+      - `grc_jatuh_tempo` (14:00 and 16:30): "Pengingat GRC ({{1}}): {{2}} tugas jatuh tempo hari
+        ini dan belum selesai: {{3}}. Ketuk Lihat tugas untuk detail."
+      - `grc_ringkasan_manager` (10:15): "Ringkasan tim GRC hari ini: {{1}} terlambat, {{2}} jatuh
+        tempo hari ini, {{3}} menunggu review, {{4}} menunggu persetujuan, {{5}} terhambat. Ketuk
+        Lihat tugas untuk detail."
+      The old `grc_daily_reminder` is no longer sent and can be deleted. Templates are paid
+      *utility* messages when the person has not written to the bot in the last 24 hours.
 - [ ] Sheet: add a `WhatsApp` column to **Staff** (international format, e.g. `+852 9123 4567`)
       for everyone who may use the bot, and a hidden tab **`_wa_pending`** with the headers
       `Key`, `Kind`, `Sender`, `Text`, `Prompt`, `Media`, `Message IDs`, `Task ID`, `Status`,
@@ -368,7 +411,7 @@ BRI does this part in Meta; the service only needs the IDs and two secrets after
 - [ ] Google Cloud: `deploy/setup_gcp.sh` already made the queue and roles. Store the two
       secrets with `deploy/setup_secrets.sh WA_ACCESS_TOKEN` and `… WA_APP_SECRET`, fill the `WA_*`
       values and `RUNTIME_SA_EMAIL` in `deploy/env.prod.yaml` (then `deploy/setup_secrets.sh env`),
-      and run `deploy/deploy.sh`. The Scheduler jobs `grc-wa-drafts` and `grc-wa-reminders` come
+      and run `deploy/deploy.sh`. The Scheduler jobs `grc-wa-drafts` and `grc-reminders` come
       from `deploy/setup_scheduler.sh`.
 - [ ] Test: send `help` to the bot from a Staff number, then the WhatsApp tests in
       `docs/LIVE_TEST.md`.

@@ -82,3 +82,19 @@ Set up Staff roles first (README §1b). Use a test task that is approved (`Not S
 | R3 | Change the deadline to a Saturday 5 days away; rename the row `R test 2`; force run. | The row's `Due date` is the Friday before; its Original message says "moved from Sat …". |
 | R4 | Set the row's Doer to a name not in Staff; as the manager send `recurring`. | The reply lists the row under "Not used until fixed"; `/health` warns `Recurring: 1 row(s) cannot be used`. |
 | R5 | Clean up: set the test rows' `Active` to `No` and cancel the test tasks. | — |
+
+
+## Reminder schedule (DESIGN section 22, part A)
+
+Use a test task you own, on a working day. Cloud Scheduler > `grc-reminders` > **Force run**
+runs the job at once; it still only sends what is due at that time.
+
+| # | Do this | Expected |
+|---|---------|----------|
+| M1 | Run `installServiceTabs()` in Apps Script; open `/health`. | No `missing tab _outbox / _reminders_sent / _event_queue` warnings. |
+| M2 | A test task due **3 days from today**, Status `In Progress`, you as Doer. Force run after 10:00. | One email "[GRC] Your tasks" listing it under "Due in 3 days"; `_reminders_sent` has its row and `slot:morning`; `_outbox` has the email with its Thread ID. Force run again: nothing new. |
+| M3 | As a Manager in Staff, force run after 10:15. | One "[GRC] Team summary" email; once only. |
+| M4 | Set the test task's `Due date` to today. Force run after 14:00, then after 16:30. | 14:00: "Due today, not done yet" to the Doer and Owner. 16:30: "Last call" to them and the Manager. |
+| M5 | Reply to the M2 email with "ok noted". | Labelled `GRC/Reply`, no new task; the bot answers with how to update. |
+| M6 | After 19:00 (or at a weekend), approve a `Proposed` test task. | No assignment email yet; the next working day after 10:00 it arrives. Send `review G-…` on a test task at night: the reviewer's email arrives after 10:00 the next working day (`_event_queue` empties). |
+| M7 | WhatsApp only (templates approved): fill your `WhatsApp opt-in`, force run after 10:00 with a due task. | The `grc_pagi` template with a **Lihat tugas** button (tapping it does nothing until part B). |
