@@ -12,7 +12,7 @@ from typing import Any
 from app import clock
 from app.drive import Folder, folder_url
 from app.extract.ai import NotConfigured
-from app.models import WA_PENDING_COLUMNS, AIResult, Attachment, CatalogEntry
+from app.models import SERVICE_TABS, WA_PENDING_COLUMNS, AIResult, Attachment, CatalogEntry
 from app.sheets import SheetStore, column_letter
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -73,6 +73,8 @@ class FakeSheetsBackend:
         tabs["_state"] = [["ID", "Status", "Owner", "Doer", "Notified doer", "Notified at"]]
         tabs["_failures"] = [["Key", "Count", "Last error", "Last at"]]
         tabs["_wa_pending"] = [list(WA_PENDING_COLUMNS)]
+        for name, columns in SERVICE_TABS.items():  # v1.4 part 2 (DESIGN section 22)
+            tabs[name] = [list(columns)]
         return cls(tabs)
 
     # Helpers for tests ---------------------------------------------------------------------
@@ -296,6 +298,7 @@ class FakeGmailClient:
         self.fail_reading: set[str] = set()
         self.fail_labelling = False
         self.fail_reply = False
+        self.fail_send = False
         self.auth_broken = False
         self.stored: dict[str, list[Attachment]] = {}  # task ID -> files kept (GRC/Files)
         self.watched: list[str] = []  # Pub/Sub topics passed to watch()
@@ -356,15 +359,23 @@ class FakeGmailClient:
         labels.difference_update(remove)
         labels.update(add)
 
-    def reply(self, original: Any, email: Any, sender_name: str) -> None:
+    def reply(self, original: Any, email: Any, sender_name: str) -> Any:
+        from app.gmail import SentMail
+
         self._check()
         if self.fail_reply:
             raise OSError("cannot send")
         self.replies.append((original.id, email, sender_name))
+        return SentMail(id=f"reply-{len(self.replies)}", thread_id=original.thread_id)
 
-    def send(self, email: Any, sender_name: str) -> None:
+    def send(self, email: Any, sender_name: str) -> Any:
+        from app.gmail import SentMail
+
         self._check()
+        if self.fail_send:
+            raise OSError("cannot send")
         self.sent.append((email, sender_name))
+        return SentMail(id=f"sent-{len(self.sent)}", thread_id=f"thread-sent-{len(self.sent)}")
 
     def store_files(self, task_id: str, attachments: list[Attachment]) -> None:
         self._check()
@@ -417,6 +428,7 @@ class FakeWhatsApp:
     def __init__(self, media: dict[str, bytes] | None = None):
         self.texts: list[tuple[str, str]] = []
         self.templates: list[tuple[str, str, str, list[str]]] = []
+        self.payloads: list[list[str]] = []  # quick-reply payloads, one list per template
         self.media = media or {}
         self.fail_send = False
 
@@ -426,10 +438,14 @@ class FakeWhatsApp:
         self.texts.append((to, text))
         return f"bot-{len(self.texts)}"
 
-    def send_template(self, to: str, name: str, language: str, params: list[str]) -> None:
+    def send_template(
+        self, to: str, name: str, language: str, params: list[str], payloads: Sequence[str] = ()
+    ) -> str | None:
         if self.fail_send:
             raise RuntimeError("send failed")
         self.templates.append((to, name, language, params))
+        self.payloads.append(list(payloads))
+        return f"tpl-{len(self.templates)}"
 
     def download_media(self, media_id: str) -> bytes:
         if media_id not in self.media:

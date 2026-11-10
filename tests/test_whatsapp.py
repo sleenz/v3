@@ -653,7 +653,7 @@ def test_wa_jobs_skip_when_whatsapp_is_not_configured():
         chat=FakeChatClient(),
     )
     http = client(WaLinks(Settings(), None, None), runtime)
-    assert "skipped" in http.post("/jobs/wa-reminders").json()
+    assert "replaced_by" in http.post("/jobs/wa-reminders").json()  # section 22
     assert "skipped" in http.post("/jobs/wa-drafts").json()
 
 

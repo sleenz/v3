@@ -27,7 +27,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
-from app import clock
+from app import clock, outbox
 from app.extract.clean import strip_noise
 from app.models import AppConfig, Attachment, AuditEntry, FailureRow, OutgoingEmail, RawRequest
 from app.notify import acknowledgement_email, with_files
@@ -88,6 +88,13 @@ class GmailMessage(BaseModel):
     automatic: bool = False  # auto-reply, bounce or bulk mail
 
 
+class SentMail(BaseModel):
+    """What Gmail returns for a sent message: its id and thread (kept in `_outbox`)."""
+
+    id: str = ""
+    thread_id: str = ""
+
+
 class GmailClient(Protocol):
     def address(self) -> str:
         """The bot mailbox's own address."""
@@ -107,11 +114,13 @@ class GmailClient(Protocol):
         """Change a message's labels by name (`UNREAD`, `INBOX` are Gmail's own)."""
         ...
 
-    def reply(self, original: GmailMessage, email: OutgoingEmail, sender_name: str) -> None:
+    def reply(
+        self, original: GmailMessage, email: OutgoingEmail, sender_name: str
+    ) -> SentMail | None:
         """Send `email` as a reply in `original`'s thread."""
         ...
 
-    def send(self, email: OutgoingEmail, sender_name: str) -> None: ...
+    def send(self, email: OutgoingEmail, sender_name: str) -> SentMail | None: ...
 
     def store_files(self, task_id: str, attachments: list[Attachment]) -> None:
         """Keep files for a task in the bot mailbox (v1.4 F2): a message labelled `GRC/Files`,
@@ -259,6 +268,12 @@ def build_mime(
 # --- Real client -------------------------------------------------------------------------------
 
 
+def _sent(response: Any) -> SentMail | None:
+    if not isinstance(response, dict):
+        return None
+    return SentMail(id=str(response.get("id", "")), thread_id=str(response.get("threadId", "")))
+
+
 class GoogleGmailClient:
     """Gmail API v1 as the bot mailbox ("me"), one client per thread."""
 
@@ -357,16 +372,18 @@ class GoogleGmailClient:
         }
         self._execute(self._users().messages().modify(userId="me", id=message_id, body=body))
 
-    def reply(self, original: GmailMessage, email: OutgoingEmail, sender_name: str) -> None:
+    def reply(
+        self, original: GmailMessage, email: OutgoingEmail, sender_name: str
+    ) -> SentMail | None:
         raw = build_mime(
             email, self.address(), sender_name, original.rfc_message_id, original.references
         )
         body = {"raw": raw, "threadId": original.thread_id}
-        self._execute(self._users().messages().send(userId="me", body=body))
+        return _sent(self._execute(self._users().messages().send(userId="me", body=body)))
 
-    def send(self, email: OutgoingEmail, sender_name: str) -> None:
+    def send(self, email: OutgoingEmail, sender_name: str) -> SentMail | None:
         raw = build_mime(email, self.address(), sender_name)
-        self._execute(self._users().messages().send(userId="me", body={"raw": raw}))
+        return _sent(self._execute(self._users().messages().send(userId="me", body={"raw": raw})))
 
     def store_files(self, task_id: str, attachments: list[Attachment]) -> None:
         if not attachments:
@@ -489,6 +506,43 @@ def _note_reply(services: Services, message: GmailMessage, logged_ids: list[str]
         )
 
 
+REMINDER_HELP = (
+    "To update a task, reply with the first line:\n"
+    "  progress G-0012 50\n"
+    "  review G-0012 (attach the file for review)\n"
+    "  done G-0012 (attach the proof)\n"
+    "  tugas (your open tasks)"
+)
+
+
+def _outbox_reply(gmail: GmailClient, services: Services, message: GmailMessage) -> bool:
+    """A reply in a thread the bot started (reminder, notice) that is not a command: added to
+    the Notes of its one task, or answered with how to update. False: not such a thread."""
+    store = services.store
+    if not outbox.by_thread(store, message.thread_id):
+        return False
+    task_id = outbox.thread_task(store, message.thread_id)
+    task = next((t for t in store.tasks() if t.id == task_id), None) if task_id else None
+    if task is not None:
+        _note_reply(services, message, [task.source_id] if task.source_id else [])
+        if task.source_id:
+            return True
+    reply = OutgoingEmail(
+        to=[message.sender_email],
+        subject=message.subject if message.subject.lower().startswith("re:")
+        else f"Re: {message.subject}",
+        text=REMINDER_HELP,
+        html=f"<pre>{html_escape(REMINDER_HELP)}</pre>",
+    )  # fmt: skip
+    try:
+        gmail.reply(message, reply, store.config().sender_name)
+    except GmailAuthError:
+        raise
+    except Exception as error:
+        logger.error("reminder_help_failed", extra={"error_type": type(error).__name__})
+    return True
+
+
 def _ignore_reason(message: GmailMessage, bot: str, config: AppConfig) -> str:
     """Why a message becomes GRC/Ignored (a fixed code, never an address), or "" to process it."""
     if message.automatic:
@@ -523,6 +577,8 @@ def _email_command(
     if context is None and logged:
         task = next((t for t in (store.task_by_source_id(i) for i in logged) if t), None)
         context = task.id if task else None
+    if context is None:  # a reply to a reminder or notice about one task (section 22)
+        context = outbox.thread_task(store, message.thread_id)
     text = strip_noise(message.body_text) or message.body_text
     command = parse_command(text, has_context=context is not None)
     if command is None:
@@ -554,7 +610,12 @@ def _email_command(
         html=f"<pre>{html_escape(result.reply)}</pre>",
     )
     try:
-        gmail.reply(message, with_files(reply, result.attachments), store.config().sender_name)
+        sent = gmail.reply(
+            message, with_files(reply, result.attachments), store.config().sender_name
+        )
+        if sent is not None:
+            outbox.record(store, "Email", sent.id, person.name, [context or ""], "command",
+                          sent.thread_id)  # fmt: skip
     except GmailAuthError:
         raise
     except Exception as error:
@@ -629,6 +690,12 @@ def process_inbox(
                 continue
             if logged and services.store.task_by_source_id(message.id) is None:
                 _note_reply(services, message, logged)
+                _modify(gmail, message.id, [REPLY_LABEL], [UNREAD, INBOX])
+                run.replies += 1
+                continue
+            if services.store.task_by_source_id(message.id) is None and _outbox_reply(
+                gmail, services, message
+            ):  # a reply to a reminder or notice is never a new request (section 22)
                 _modify(gmail, message.id, [REPLY_LABEL], [UNREAD, INBOX])
                 run.replies += 1
                 continue

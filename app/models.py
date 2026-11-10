@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
@@ -468,6 +468,57 @@ class FailureRow(_SheetRow):
         return 0 if _blank_to_none(value) is None else value
 
 
+# --- Reminder schedule tabs (DESIGN section 22) ---------------------------------------------
+
+Channel = Literal["WhatsApp", "Email"]
+
+
+class OutboxRow(_SheetRow):
+    """One `_outbox` row: a message the bot sent, so a reply to it finds its task(s)."""
+
+    sent_at: datetime = Field(alias="Sent at")
+    channel: Channel = Field(alias="Channel")
+    message_id: str = Field(default="", alias="Message ID")  # WhatsApp wamid or Gmail message id
+    thread_id: str = Field(default="", alias="Thread ID")  # Gmail thread id
+    person: str = Field(default="", alias="Person")  # Staff name
+    task_ids: str = Field(default="", alias="Task IDs")  # comma-separated
+    kind: str = Field(default="", alias="Kind")
+
+    _dates = field_validator("sent_at", mode="before")(_blank_to_none)
+
+    @property
+    def tasks(self) -> list[str]:
+        return [part.strip() for part in self.task_ids.split(",") if part.strip()]
+
+
+class ReminderSent(_SheetRow):
+    """One `_reminders_sent` row: rule + task + person + channel sent on a date (sent once)."""
+
+    day: date = Field(alias="Date")
+    rule: str = Field(alias="Rule")
+    task_id: str = Field(default="", alias="Task ID")
+    person: str = Field(alias="Person")
+    channel: Channel = Field(alias="Channel")
+    sent_at: datetime | None = Field(default=None, alias="Sent at")
+
+    _dates = field_validator("day", "sent_at", mode="before")(_blank_to_none)
+
+    @property
+    def key(self) -> tuple[date, str, str, str, str]:
+        return (self.day, self.rule, self.task_id, self.person.casefold(), self.channel)
+
+
+class QueuedEvent(_SheetRow):
+    """One `_event_queue` row: a notice raised outside working hours, sent at Workday start."""
+
+    queued_at: datetime = Field(alias="Queued at")
+    kind: str = Field(alias="Kind")
+    task_id: str = Field(alias="Task ID")
+    note: str = Field(default="", alias="Note")
+
+    _dates = field_validator("queued_at", mode="before")(_blank_to_none)
+
+
 class AuditEntry(_SheetRow):
     timestamp: datetime = Field(alias="Timestamp")
     user: str = Field(alias="User")
@@ -495,7 +546,8 @@ class AppConfig(_SheetRow):
     support_share: float = Field(alias="Support share")
     overload_threshold: float = Field(alias="Overload threshold")
     stale_after_days: int = Field(alias="Stale after (days)")
-    reminder_time: str = Field(alias="Reminder time")
+    # Retired by the reminder schedule (DESIGN section 22); still read if present.
+    reminder_time: str = Field(default="", alias="Reminder time")
     leaving_warning_days: int = Field(alias="Leaving warning (days)")
     unknown_letter_code: str = Field(alias="Unknown letter code")
     manager_email: str = Field(alias="Manager email")
@@ -520,8 +572,68 @@ class AppConfig(_SheetRow):
     file_storage: Literal["Drive", "None"] = Field(default="None", alias="File storage")
     # v1.2 item 11: email PDFs go to the AI unmasked. Blank or missing = on; FALSE/No turns it off.
     ai_reads_pdfs: bool = Field(default=True, alias="AI reads PDFs")
+    # Reminder schedule (DESIGN section 22): editable in the sheet, no deploy needed.
+    workday_start: time = Field(default=time(10, 0), alias="Workday start")
+    workday_end: time = Field(default=time(19, 0), alias="Workday end")
+    reminder_time_morning: time = Field(default=time(10, 0), alias="Reminder time morning")
+    reminder_time_manager: time = Field(default=time(10, 15), alias="Reminder time manager")
+    reminder_time_due_today: time = Field(default=time(14, 0), alias="Reminder time due today")
+    reminder_time_last_call: time = Field(default=time(16, 30), alias="Reminder time last call")
+    max_reminders_per_day: int = Field(default=3, alias="Max reminders per day")
+    holidays: list[date] = Field(default_factory=list, alias="Holidays")
+    remind_days_before: list[int] = Field(default_factory=lambda: [7, 3, 1],
+                                          alias="Remind days before due")  # fmt: skip
 
     _lists = field_validator("known_requesters", mode="before")(_split_list)
+
+    @field_validator(
+        "workday_start", "workday_end", "reminder_time_morning", "reminder_time_manager",
+        "reminder_time_due_today", "reminder_time_last_call", mode="before",
+    )  # fmt: skip
+    @classmethod
+    def _clock_time(cls, value: object, info: ValidationInfo) -> object:
+        """`10:00` typed as text, or a time cell (a fraction of a day); blank = the default."""
+        if _blank_to_none(value) is None and info.field_name:
+            return cls.model_fields[info.field_name].get_default(call_default_factory=True)
+        if isinstance(value, int | float) and 0 <= value < 1:
+            minutes = round(value * 24 * 60)
+            return time(minutes // 60, minutes % 60)
+        if isinstance(value, str):
+            match = re.match(r"^\s*(\d{1,2})[:.](\d{2})\s*$", value)
+            if match:
+                return time(int(match.group(1)), int(match.group(2)))
+        return value
+
+    @field_validator("max_reminders_per_day", mode="before")
+    @classmethod
+    def _cap(cls, value: object) -> object:
+        if _blank_to_none(value) is None:
+            return 3
+        return int(value) if isinstance(value, float) and value.is_integer() else value
+
+    @field_validator("holidays", mode="before")
+    @classmethod
+    def _holiday_dates(cls, value: object) -> object:
+        """`2026-12-25; 2027-01-01` (also `25/12/2026`, one per line), or one date cell."""
+        if _blank_to_none(value) is None:
+            return []
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return [(datetime(1899, 12, 30) + timedelta(days=value)).date()]
+        if isinstance(value, str):
+            parts = re.split(r"[;,\n]", value)
+            return [_text_date(part) for part in parts if part.strip()]
+        return value
+
+    @field_validator("remind_days_before", mode="before")
+    @classmethod
+    def _day_counts(cls, value: object) -> object:
+        if _blank_to_none(value) is None:
+            return [7, 3, 1]
+        if isinstance(value, int | float):
+            return [int(value)]
+        if isinstance(value, str):
+            return [int(float(part)) for part in re.split(r"[;,\s]+", value) if part.strip()]
+        return value
 
     @field_validator("allowed_senders", mode="before")
     @classmethod
@@ -594,7 +706,21 @@ REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
     "_failures": tuple(f.alias for f in FailureRow.model_fields.values() if f.alias),
 }
 
+
 # Read only by the WhatsApp bot (v1.3), so a sheet without it still serves email and Chat.
+def _columns(model: type[BaseModel]) -> tuple[str, ...]:
+    return tuple(f.alias for f in model.model_fields.values() if f.alias)
+
+
+OUTBOX = "_outbox"
+REMINDERS_SENT = "_reminders_sent"
+EVENT_QUEUE = "_event_queue"
+SERVICE_TABS: dict[str, tuple[str, ...]] = {
+    OUTBOX: _columns(OutboxRow),
+    REMINDERS_SENT: _columns(ReminderSent),
+    EVENT_QUEUE: _columns(QueuedEvent),
+}
+
 WA_PENDING_COLUMNS: tuple[str, ...] = tuple(
     f.alias for f in WaPending.model_fields.values() if f.alias
 )

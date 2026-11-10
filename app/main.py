@@ -28,10 +28,11 @@ from app.chat import ChatClient, GoogleChatClient, handle_event
 from app.drive import DriveStore, GoogleDriveStore, NoFileStorage
 from app.extract.ai import provider_from_config
 from app.gmail import INBOX_RUNS, GmailAuthError, GmailClient, GoogleGmailClient, process_inbox
-from app.jobs import recurring_problems, run_changes, run_digest, run_recurring
+from app.jobs import recurring_problems, run_changes, run_recurring
 from app.logs import setup_logging
 from app.models import REVIEW_COLUMNS
 from app.pipeline import Services
+from app.schedule import run_reminders
 from app.settings import Settings, get_settings, missing_settings
 from app.sheets import GoogleSheetsBackend, SchemaError, SheetStore
 from app.whatsapp import (
@@ -43,7 +44,6 @@ from app.whatsapp import (
     handle_task,
     parse_webhook,
     run_wa_drafts,
-    run_wa_reminders,
     signature_ok,
     verify_challenge,
 )
@@ -98,6 +98,10 @@ def check_startup(
                 uncovered_divisions(store)
                 + missing_review_columns(store)
                 + recurring_warning(store)
+                + [
+                    f"missing tab {name} (reminders and reply mapping need it)"
+                    for name in store.missing_service_tabs()
+                ]
             )
         except SchemaError as error:
             sheet = list(error.problems)
@@ -380,26 +384,29 @@ def recurring_job(runtime: RuntimeDep) -> dict[str, object] | JSONResponse:
     return {"job": "recurring", **run.model_dump()}
 
 
-@jobs.post("/digest", response_model=None)
-def digest_job(runtime: RuntimeDep) -> dict[str, object] | JSONResponse:
+@jobs.post("/reminders", response_model=None)
+def reminders_job(runtime: RuntimeDep) -> dict[str, object] | JSONResponse:
+    """Every 15 minutes on weekdays; the app decides what is due (DESIGN section 22)."""
     try:
         runtime.store.load()
-        run = run_digest(runtime.store, runtime.gmail, runtime.settings.sheet_url)
+        run = run_reminders(runtime.store, runtime.gmail, runtime.wa, runtime.settings.sheet_url)
     except (SchemaError, GmailAuthError) as error:
-        return _job_error("digest", error, runtime)
-    return {"job": "digest", **run.model_dump()}
+        return _job_error("reminders", error, runtime)
+    return {"job": "reminders", **run.model_dump()}
+
+
+@jobs.post("/digest", response_model=None)
+def digest_job() -> dict[str, object]:
+    """Replaced by /jobs/reminders (section 22). Kept so an old Scheduler job sends nothing."""
+    logger.warning("job_replaced", extra={"job": "digest"})
+    return {"job": "digest", "replaced_by": "/jobs/reminders"}
 
 
 @jobs.post("/wa-reminders", response_model=None)
-def wa_reminders_job(runtime: RuntimeDep) -> dict[str, object] | JSONResponse:
-    if runtime.wa is None:
-        return {"job": "wa-reminders", "skipped": "WhatsApp not configured"}
-    try:
-        runtime.store.load()
-        run = run_wa_reminders(runtime.store, runtime.wa, runtime.settings.sheet_url)
-    except SchemaError as error:
-        return _job_error("wa-reminders", error, runtime)
-    return {"job": "wa-reminders", **run.model_dump()}
+def wa_reminders_job() -> dict[str, object]:
+    """Replaced by /jobs/reminders (section 22). Kept so an old Scheduler job sends nothing."""
+    logger.warning("job_replaced", extra={"job": "wa-reminders"})
+    return {"job": "wa-reminders", "replaced_by": "/jobs/reminders"}
 
 
 @jobs.post("/wa-drafts", response_model=None)

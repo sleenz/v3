@@ -95,6 +95,10 @@
   {
    "Setting": "File storage",
    "Value": "Drive"
+  },
+  {
+   "Setting": "Workday start",
+   "Value": "08:00"
   }
  ]
 }

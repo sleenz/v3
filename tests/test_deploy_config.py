@@ -184,3 +184,50 @@ def test_instant_email_is_wired_end_to_end():
     assert "grc-gmail-watch|23 6 * * *|/jobs/gmail-watch" in scheduler
     assert '--push-endpoint "$url/jobs/gmail-push"' in scheduler
     assert '--push-auth-service-account "$SCHEDULER_SA"' in scheduler
+
+
+def test_apps_script_service_tabs_match_the_code():
+    """installServiceTabs() creates exactly the hidden tabs and headers the service reads."""
+    import json
+    import re
+
+    from app.models import SERVICE_TABS
+
+    script = (ROOT / "apps_script" / "audit.gs").read_text(encoding="utf-8")
+    block = re.search(r"var SERVICE_TABS = (\{.*?\});", script, re.DOTALL)
+    assert block is not None
+    tabs = json.loads(block.group(1).replace("'", '"'))
+    assert {name: tuple(columns) for name, columns in tabs.items()} == SERVICE_TABS
+
+
+def test_scheduler_has_the_reminder_job_and_drops_the_old_ones():
+    scheduler = (ROOT / "deploy" / "setup_scheduler.sh").read_text(encoding="utf-8")
+    assert "grc-reminders|*/15 9-19 * * 1-5|/jobs/reminders" in scheduler
+    assert '"grc-digest|' not in scheduler and '"grc-wa-reminders|' not in scheduler
+    assert "for old in grc-digest grc-wa-reminders" in scheduler
+
+
+def test_whatsapp_templates_match_what_the_code_sends():
+    """Every template the reminder schedule sends is defined in whatsapp_templates/, with as
+    many body variables as the code fills and a "Lihat tugas" quick-reply button."""
+    import json
+    import re
+
+    from app.reminders import (
+        TEMPLATE_DUE,
+        TEMPLATE_LANGUAGE,
+        TEMPLATE_MANAGER,
+        TEMPLATE_MORNING,
+    )
+
+    params = {TEMPLATE_MORNING: 3, TEMPLATE_DUE: 3, TEMPLATE_MANAGER: 5}
+    for name, count in params.items():
+        spec = json.loads((ROOT / "whatsapp_templates" / f"{name}.json").read_text("utf-8"))
+        assert spec["name"] == name and spec["language"] == TEMPLATE_LANGUAGE
+        assert spec["category"] == "UTILITY"
+        body = next(c for c in spec["components"] if c["type"] == "BODY")
+        assert len(set(re.findall(r"\{\{(\d+)\}\}", body["text"]))) == count
+        assert len(body["example"]["body_text"][0]) == count
+        assert not body["text"].startswith("{{") and not body["text"].endswith("}}")
+        buttons = next(c for c in spec["components"] if c["type"] == "BUTTONS")["buttons"]
+        assert [b["text"] for b in buttons] == ["Lihat tugas"]

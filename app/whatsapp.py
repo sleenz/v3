@@ -27,14 +27,14 @@ import logging
 import re
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, SecretStr
 
-from app import clock
+from app import clock, outbox
 from app.chat import logged_text, person_tasks_text
 from app.commands import parse_command
 from app.extract.prompt import assignee, parse_prompt
@@ -127,6 +127,11 @@ _YES = frozenset(
 # --- Meta Graph API and Cloud Tasks -------------------------------------------------------------
 
 
+def template_text(value: str) -> str:
+    """A template parameter: one line, no tabs, no long runs of spaces, at most 1,000 chars."""
+    return re.sub(r"\s+", " ", value).strip()[:1000] or "-"
+
+
 class WhatsAppError(Exception):
     """A Graph API call failed. Carries the HTTP status only (the body can quote messages)."""
 
@@ -140,7 +145,16 @@ class WhatsAppClient(Protocol):
         """Send a text; returns the message ID (v1.4: replies to it carry it as context)."""
         ...
 
-    def send_template(self, to: str, name: str, language: str, params: list[str]) -> None: ...
+    def send_template(
+        self,
+        to: str,
+        name: str,
+        language: str,
+        params: list[str],
+        payloads: Sequence[str] = (),
+    ) -> str | None:
+        """A template; `payloads` fill its quick-reply buttons in order (returned on a tap)."""
+        ...
 
     def download_media(self, media_id: str) -> bytes: ...
 
@@ -192,16 +206,34 @@ class GraphWhatsApp:
             to, {"type": "text", "text": {"preview_url": False, "body": text[:MAX_TEXT_CHARS]}}
         )
 
-    def send_template(self, to: str, name: str, language: str, params: list[str]) -> None:
-        parameters = [{"type": "text", "text": value} for value in params]
-        self._send(
+    def send_template(
+        self,
+        to: str,
+        name: str,
+        language: str,
+        params: list[str],
+        payloads: Sequence[str] = (),
+    ) -> str | None:
+        # Template parameters may not hold line breaks, tabs or 4+ spaces in a row (Meta).
+        parameters = [{"type": "text", "text": template_text(value)} for value in params]
+        components: list[dict[str, Any]] = [{"type": "body", "parameters": parameters}]
+        components += [
+            {
+                "type": "button",
+                "sub_type": "quick_reply",
+                "index": str(index),
+                "parameters": [{"type": "payload", "payload": payload}],
+            }
+            for index, payload in enumerate(payloads)
+        ]
+        return self._send(
             to,
             {
                 "type": "template",
                 "template": {
                     "name": name,
                     "language": {"code": language},
-                    "components": [{"type": "body", "parameters": parameters}],
+                    "components": components,
                 },
             },
         )
@@ -382,6 +414,9 @@ def _reply(ctx: WaContext, to: str, text: str, task_id: str = "") -> None:
         return
     if not message_id:
         return
+    person = _person(ctx.store, to)
+    outbox.record(ctx.store, "WhatsApp", message_id, person.name if person else "", [task_id],
+                  "reply")  # fmt: skip
     now = clock.now()
     sent = WaPending(
         key=message_id,
