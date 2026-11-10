@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
 from app import clock
 from app.drive import DriveStore, folder_name
 from app.extract import prompt as sender_prompt
 from app.extract import rules
-from app.extract.ai import PDFS_SKIPPED_FLAG, AIProvider, pdf_documents, run_ai
+from app.extract.ai import PDFS_SKIPPED_FLAG, AIProvider, pdf_documents, read_prompt, run_ai
 from app.extract.clean import (
     Unwrapped,
     clean_text,
@@ -26,8 +26,14 @@ from app.extract.clean import (
     strip_noise,
     unwrap_forward,
 )
-from app.models import AuditEntry, Contact, RawRequest, Task, TaskResult
-from app.route import match_staff_name, route, sender_assignment
+from app.models import AuditEntry, Contact, RawRequest, StaffMember, Task, TaskResult
+from app.route import (
+    fuzzy_staff_name,
+    match_staff_name,
+    route,
+    sender_assignment,
+    staff_mentioned,
+)
 from app.sheets import SheetStore
 
 logger = logging.getLogger("grc.pipeline")
@@ -45,8 +51,9 @@ class Services:
     ai: AIProvider
 
 
-def _result(task: Task, created: bool) -> TaskResult:
+def _result(task: Task, created: bool, due_from_prompt: bool = False) -> TaskResult:
     return TaskResult(
+        due_from_prompt=due_from_prompt,
         task_id=task.id,
         created=created,
         title=task.title,
@@ -90,6 +97,127 @@ def _files_note(raw: RawRequest) -> str:
 
 
 PROMPT_NOT_STAFF_FLAG = "PROMPT ignored: sender is not in Staff"
+
+
+@dataclass
+class OwnerChoice:
+    """Who the sender's PROMPT names as owner (a Staff full name, or None) and how it was read."""
+
+    name: str | None = None
+    flags: list[str] = field(default_factory=list)
+
+
+def staff_match(name: str, staff: list[StaffMember]) -> tuple[StaffMember | None, bool]:
+    """(person, typo corrected): exact Staff match first, then a close spelling."""
+    person = match_staff_name(name, staff)
+    if person is not None:
+        return person, False
+    person = fuzzy_staff_name(name, staff)
+    return person, person is not None
+
+
+def rules_owner(
+    prompt: str, asked: sender_prompt.PromptOverrides, staff: list[StaffMember]
+) -> OwnerChoice:
+    """The owner the rules read in the PROMPT (the fallback when the AI cannot):
+    1. the name in "assign to X", "ask X to", "assign X to", matched to Staff with a small typo
+       allowed; 2. a Staff member named anywhere in a PROMPT that has an assign word."""
+    if not asked.assign_to and not sender_prompt.wants_assignment(prompt):
+        return OwnerChoice()
+    if asked.assign_to:
+        person, corrected = staff_match(asked.assign_to, staff)
+        if person is not None:
+            note = [f'PROMPT: "{asked.assign_to}" read as {person.name}'] if corrected else []
+            return OwnerChoice(person.name, note)
+    reviewer = staff_match(asked.reviewer, staff)[0] if asked.reviewer else None
+    named = [
+        p for p in staff_mentioned(sender_prompt.without_reviewer(prompt), staff) if p != reviewer
+    ]
+    if len(named) == 1:
+        return OwnerChoice(named[0].name)
+    if asked.assign_to:
+        return OwnerChoice(None, [f'PROMPT: "{asked.assign_to}" not found in Staff'])
+    return OwnerChoice(None, ["PROMPT: couldn't read who to assign"])
+
+
+AI_READ_FLAG = "PROMPT read by AI - check"
+
+
+@dataclass
+class PromptDecision:
+    """What the sender's PROMPT sets: Staff full names for owner and reviewer, and a date."""
+
+    owner: str | None = None
+    reviewer: str | None = None
+    due: date | None = None
+    flags: list[str] = field(default_factory=list)
+
+
+def decide_prompt(
+    prompt: str,
+    today: date,
+    staff: list[StaffMember],
+    ai: AIProvider,
+    ai_prompt: str = "",
+) -> PromptDecision:
+    """Read the sender's PROMPT (DESIGN section 21): the AI first, the rules as fallback and check.
+
+    The AI sees only the PROMPT line. Names it reads must be written in the line and must match
+    Staff by rules (typo allowed). When the AI fails, is off, or reads nothing usable, the rules
+    decide. A deadline the rules also read wins over a different AI date (flagged). Anything the
+    AI read is flagged; the manager still approves every task."""
+    asked = sender_prompt.overrides(prompt, today)
+    reading = read_prompt(ai, ai_prompt or prompt, today)
+    flags: list[str] = []
+    used_ai = False
+
+    def person(name: str | None, what: str) -> str | None:
+        if not name:
+            return None
+        found, corrected = staff_match(name, staff)
+        if found is not None and corrected:
+            flags.append(f'PROMPT: {what} "{name}" read as {found.name}')
+        return found.name if found else None
+
+    # Owner: the AI's name if it is in Staff, else the rules'.
+    owner = person(reading.owner, "owner") if reading else None
+    if owner:
+        used_ai = True
+        rules = rules_owner(prompt, asked, staff)
+        if rules.name and rules.name != owner:
+            flags.append(f"PROMPT: owner unclear (rules read {rules.name}) - check")
+    else:
+        choice = rules_owner(prompt, asked, staff)
+        owner = choice.name
+        flags.extend(choice.flags)
+        if owner is None and reading and reading.owner:
+            flags = [f for f in flags if not f.startswith("PROMPT: couldn't read")]
+            flags.append(f'PROMPT: "{reading.owner}" not found in Staff')
+
+    # Reviewer: the same, never the owner.
+    reviewer = person(reading.reviewer, "reviewer") if reading else None
+    if reviewer:
+        used_ai = True
+    elif asked.reviewer:
+        reviewer = person(asked.reviewer, "reviewer")
+        if reviewer is None:
+            flags.append(f'PROMPT: reviewer "{asked.reviewer}" not found in Staff')
+    elif reading and reading.reviewer:
+        flags.append(f'PROMPT: reviewer "{reading.reviewer}" not found in Staff')
+
+    # Deadline: the rules' date when they read one (an AI date that differs is flagged).
+    ai_due = reading.deadline if reading else None
+    due = asked.due
+    flags.extend(asked.flags)
+    if due is not None and ai_due is not None and ai_due != due:
+        flags.append(f"PROMPT: deadline unclear (AI read {ai_due:%d %b %Y}) - check")
+    elif due is None and ai_due is not None:
+        due = ai_due
+        used_ai = True
+
+    if used_ai:
+        flags.insert(0, AI_READ_FLAG)
+    return PromptDecision(owner, reviewer, due, list(dict.fromkeys(flags)))
 
 
 def _is_staff(store: SheetStore, email: str) -> bool:
@@ -141,7 +269,12 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
                 unwrapped = replace(unwrapped, body=rest)
         elif found:
             flags.append(PROMPT_NOT_STAFF_FLAG)
-    asked = sender_prompt.overrides(note, today) if note else sender_prompt.PromptOverrides()
+    staff = store.staff()
+    decision = PromptDecision()
+    if note:
+        masked_prompt = mask_text(note, mask_emails=config.mask_emails_for_ai)
+        decision = decide_prompt(note, today, staff, services.ai, masked_prompt)
+        flags.extend(decision.flags)
     body = unwrapped.body
 
     # 3-4. Clean (light for rules, full for title/routing/AI) and mask the AI copy.
@@ -161,9 +294,8 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
     letter = rules.letter_ref(light)
     due = rules.due_date(light, today)
     due_date = due.value
-    if asked.due is not None:  # the sender's deadline beats the message, the PDF and the AI
-        due_date = asked.due
-        flags.extend(asked.flags)
+    if decision.due is not None:  # the sender's deadline beats the message, the PDF and the AI
+        due_date = decision.due
     else:
         flags.extend(due.flags)
     contacts = rules.contacts(light)
@@ -212,7 +344,7 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
             summary = ai.summary_en.strip()
             deliverables = [item.strip() for item in ai.deliverables if item.strip()]
             ai_catalog_id = ai.catalog_id if ai.catalog_id != "NONE" else None
-            if ai.deadline is not None and asked.due is None:
+            if ai.deadline is not None and decision.due is None:
                 if due_date is None:
                     due_date = ai.deadline
                 elif ai.deadline != due_date:
@@ -258,21 +390,13 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
         ai_catalog_id=ai_catalog_id,
         known_catalog_id=raw.catalog_id,
     )
-    assign_to = raw.assign_to or asked.assign_to
+    assign_to = decision.owner if note else raw.assign_to
     if assign_to:
-        routed = sender_assignment(
-            routed, assign_to, store.staff(), today, due_date, channel=raw.source
-        )
+        routed = sender_assignment(routed, assign_to, staff, today, due_date, channel=raw.source)
     flags.extend(routed.flags)
-    reviewer = ""
-    if asked.reviewer:
-        person = match_staff_name(asked.reviewer, store.staff())
-        if person is None:
-            flags.append(f'PROMPT: reviewer "{asked.reviewer}" not found in Staff')
-        else:
-            reviewer = person.name
-            if reviewer == (routed.doer or routed.owner):
-                flags.append("PROMPT: the reviewer is also the Doer")
+    reviewer = decision.reviewer or ""
+    if reviewer and reviewer == (routed.doer or routed.owner):
+        flags.append("PROMPT: the reviewer is also the Doer")
 
     # 10. Write the row, then AuditLog.
     cell_text = original
@@ -344,4 +468,4 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
         "task_created",
         extra={"task_id": saved.id, "rule": routed.rule, "flags": len(flags)},
     )
-    return _result(saved, created=True)
+    return _result(saved, created=True, due_from_prompt=decision.due is not None)

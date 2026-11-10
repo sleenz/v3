@@ -17,8 +17,9 @@ from datetime import date, datetime, timedelta
 from html import escape
 from typing import Any, Literal
 
-from app import clock, recurring
+from app import clock, outbox, recurring
 from app.commands import Command, is_me, progress_fraction
+from app.events import queue_event, should_wait
 from app.gmail import GmailAuthError, GmailClient
 from app.models import (
     OPEN_STATUSES,
@@ -158,13 +159,18 @@ def _send(
     subject: str,
     lines: list[str],
     files: list[Attachment] | None = None,
+    person: str = "",
+    task_id: str = "",
+    kind: str = "",
 ) -> bool:
     if not to:
         return False
     text = "\n".join(lines)
     email = OutgoingEmail(to=[to], subject=subject, text=text, html=f"<pre>{escape(text)}</pre>")
     try:
-        gmail.send(with_files(email, files or []), store.config().sender_name)
+        sent = gmail.send(with_files(email, files or []), store.config().sender_name)
+        if sent is not None:
+            outbox.record(store, "Email", sent.id, person, [task_id], kind, sent.thread_id)
         return True
     except GmailAuthError:
         raise
@@ -194,8 +200,13 @@ def notify(
     gmail: GmailClient,
     sheet_url: str = "",
     files: list[Attachment] | None = None,
+    queue_when_closed: bool = True,
 ) -> None:
-    """Email the people an event concerns. Paused people (Staff `Reminders paused`) get nothing."""
+    """Email the people an event concerns. Paused people (Staff `Reminders paused`) get nothing.
+    Outside working hours the notice waits in `_event_queue` for the next Workday start
+    (DESIGN section 22); `/jobs/reminders` sends it then with `queue_when_closed=False`."""
+    if queue_when_closed and should_wait(store) and queue_event(store, event, task.id):
+        return
     staff = store.staff()
     due = f"{task.due_date:%a %d %b %Y}" if task.due_date else "not set"
     link = f"Sheet: {sheet_url}" if sheet_url else ""
@@ -220,6 +231,9 @@ def notify(
             _subject(task, "review requested"),
             lines,
             _review_files(task, gmail, files or []),
+            person=reviewer.name,
+            task_id=task.id,
+            kind="in_review",
         )
     elif event in ("approved", "returned"):
         verdict = "approved" if event == "approved" else "returned for changes"
@@ -227,7 +241,16 @@ def notify(
         if event == "returned" and task.review_notes:
             lines += ["", f"Review notes: {task.review_notes}"]
         lines += ["", f"When it is done, reply: done {task.id} (attach the proof).", link]
-        _send(store, gmail, _email_of(task.doer, staff), _subject(task, verdict), lines)
+        _send(
+            store,
+            gmail,
+            _email_of(task.doer, staff),
+            _subject(task, verdict),
+            lines,
+            person=task.doer,
+            task_id=task.id,
+            kind=event,
+        )
     elif event == "assigned":
         from app.jobs import send_assignment
 

@@ -51,6 +51,16 @@ _ASK = re.compile(
     r"\b(?:ask|minta(?:lah)?|suruh)\s+([^\n.,;!?]+?)\s+(?:to|untuk|buat)\b",
     re.IGNORECASE,
 )
+# "assign enzo to do this", "tugaskan cia untuk …": the name right after the verb.
+_ASSIGN_FIRST = re.compile(
+    r"\b(?:assign|tugaskan)\s+(?!(?:this|it|ini|to|ke|kepada)\b)([^\n.,;!?]+?)\s+"
+    r"(?:to|untuk|buat)\b",
+    re.IGNORECASE,
+)
+# Any of these in a PROMPT means the sender wants someone to do the work.
+_ASSIGN_WORD = re.compile(
+    r"\b(?:assign(?:ed)?|ask|minta(?:lah)?|kasih(?:kan)?|tugaskan|suruh)\b", re.IGNORECASE
+)
 _REVIEWER = re.compile(
     r"\b(?:reviewer(?:\s+is)?|review(?:ed)?\s+by|direview\s+oleh|reviewernya)\s*:?\s+" + _NAME,
     re.IGNORECASE,
@@ -74,6 +84,7 @@ _COUNTED = [
         re.IGNORECASE,
     ),
 ]
+_DAY_AFTER = re.compile(r"\b(?:(?:the\s+)?day\s+after\s+tomorrow|lusa)\b", re.IGNORECASE)
 _TOMORROW = re.compile(r"\b(?:tomorrow|besok)\b", re.IGNORECASE)
 _DEADLINE_WORD = re.compile(
     r"\b(?:deadline|due(?:\s+date)?|by|before|sebelum|tenggat|batas\s+waktu|paling\s+lambat)\b",
@@ -126,7 +137,17 @@ def _last_name(prompt: str, *patterns: re.Pattern[str]) -> str | None:
 
 def assignee(prompt: str) -> str | None:
     """The person named in "assign this to <name>" or "ask <name> to …" (the last one)."""
-    return _last_name(prompt, _ASSIGN, _ASK)
+    return _last_name(prompt, _ASSIGN, _ASK, _ASSIGN_FIRST)
+
+
+def wants_assignment(prompt: str) -> bool:
+    """The PROMPT asks for someone to do the work (assign, ask, minta …), named or not."""
+    return _ASSIGN_WORD.search(prompt) is not None
+
+
+def without_reviewer(prompt: str) -> str:
+    """The PROMPT with "reviewer <name>" taken out, so that name is not read as the owner."""
+    return _REVIEWER.sub(" ", prompt)
 
 
 def reviewer(prompt: str) -> str | None:
@@ -141,6 +162,8 @@ def deadline(prompt: str, today: date) -> tuple[date | None, list[str]]:
         if found:
             days = int(found.group(1)) * _UNITS[found.group(2).lower()]
             return off_weekend(today + timedelta(days=days)), []
+    if _DAY_AFTER.search(prompt):
+        return off_weekend(today + timedelta(days=2)), []
     if _TOMORROW.search(prompt):
         return off_weekend(today + timedelta(days=1)), []
     hits = find_dates(prompt, today)

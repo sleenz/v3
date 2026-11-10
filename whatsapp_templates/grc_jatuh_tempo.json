@@ -1,0 +1,13 @@
+{
+  "name": "grc_jatuh_tempo",
+  "language": "id",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "Pengingat GRC ({{1}}): {{2}} tugas jatuh tempo hari ini dan belum selesai: {{3}}. Ketuk Lihat tugas untuk detail.",
+      "example": {"body_text": [["Pengingat terakhir", "1", "G-0012"]]}
+    },
+    {"type": "BUTTONS", "buttons": [{"type": "QUICK_REPLY", "text": "Lihat tugas"}]}
+  ]
+}

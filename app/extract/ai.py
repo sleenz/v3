@@ -23,10 +23,11 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError, field_validator
 
 from app.models import DEFAULT_AI_MODEL, AIResult, Attachment, CatalogEntry
 
@@ -63,6 +64,10 @@ class AIProvider(Protocol):
         attachment_names: list[str],
         documents: Sequence[Attachment] = (),
     ) -> AIResult | None: ...
+
+    def read_prompt(self, prompt_text: str, today: date) -> PromptReading | None:
+        """Owner, reviewer and deadline from the sender's PROMPT line (DESIGN section 21)."""
+        ...
 
 
 def is_pdf(attachment: Attachment) -> bool:
@@ -155,6 +160,9 @@ class NullProvider:
         attachment_names: list[str],
         documents: Sequence[Attachment] = (),
     ) -> AIResult | None:
+        return None
+
+    def read_prompt(self, prompt_text: str, today: date) -> PromptReading | None:
         return None
 
 
@@ -254,6 +262,137 @@ class GeminiProvider:
         if not text:
             return None
         return AIResult.model_validate_json(text)
+
+    def read_prompt(self, prompt_text: str, today: date) -> PromptReading | None:
+        """Only the sender's PROMPT line goes in: no request text, no PDF (DESIGN section 21)."""
+        interaction = self._get_client().interactions.create(
+            model=self.model,
+            input=prompt_reading_prompt(prompt_text, today),
+            response_format={
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": PROMPT_READING_SCHEMA,
+            },
+            generation_config={"temperature": 0},
+            store=False,
+        )
+        text = getattr(interaction, "output_text", None)
+        if not text:
+            return None
+        return PromptReading.model_validate_json(text)
+
+
+# --- Reading the sender's PROMPT line (DESIGN section 21) --------------------------------------
+
+PROMPT_READING_INSTRUCTIONS = """\
+A member of a GRC team typed the instruction below to a task tracker. Read it and return:
+- owner: the person they want to do the task, copied exactly as written (keep any typo), or null;
+- reviewer: the person who should review the work, copied exactly as written, or null;
+- deadline: the date the work is due as YYYY-MM-DD, or null if no deadline is given.
+Today is {today}. Work out relative deadlines from today:
+- "N days from now", "in N days", "N hari lagi": today plus N calendar days; if that is a
+  Saturday or Sunday, use the Friday before.
+- "tomorrow" / "besok": the next day (a weekend day moves to the Friday before).
+- "this friday" / "jumat ini": the coming Friday, today included. "friday" alone: the next
+  Friday after today. "next friday" / "jumat depan" / "friday next week": the Friday of next
+  week (the week starts on Monday).
+- A date written out (20 Nov, 20/11/2026): that date, day first.
+Never invent a name or a date. The instruction may mix English and Indonesian.
+
+Instruction: {text}"""
+PROMPT_READING_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "owner": {"type": ["string", "null"]},
+        "reviewer": {"type": ["string", "null"]},
+        "deadline": {"type": ["string", "null"], "description": "YYYY-MM-DD"},
+    },
+    "required": ["owner", "reviewer", "deadline"],
+}
+MAX_PROMPT_CHARS = 1000
+
+
+class PromptReading(BaseModel):
+    owner: str | None = None
+    reviewer: str | None = None
+    deadline: date | None = None
+
+    @field_validator("owner", "reviewer", mode="before")
+    @classmethod
+    def _blank(cls, value: object) -> object:
+        return value.strip() or None if isinstance(value, str) else value
+
+    @field_validator("deadline", mode="before")
+    @classmethod
+    def _date_or_none(cls, value: object) -> object:
+        if isinstance(value, str):
+            try:
+                return date.fromisoformat(value.strip())
+            except ValueError:
+                return None
+        return value
+
+
+def prompt_reading_prompt(prompt_text: str, today: date) -> str:
+    return PROMPT_READING_INSTRUCTIONS.format(
+        today=f"{today:%A %Y-%m-%d}", text=prompt_text[:MAX_PROMPT_CHARS]
+    )
+
+
+def _plain(text: str) -> str:
+    return re.sub(r"\s+", " ", text.casefold()).strip()
+
+
+def read_prompt(
+    provider: AIProvider, prompt_text: str, today: date, timeout: float = TIMEOUT_SECONDS
+) -> PromptReading | None:
+    """What the AI reads in the PROMPT line, or None (no AI, or the call failed). Names not
+    written in the line are dropped, and so is a deadline in the past or over a year away:
+    the AI reads, it never invents. Never raises; logs no text."""
+    reader = getattr(provider, "read_prompt", None)
+    if isinstance(provider, NullProvider) or reader is None:
+        return None
+    started = time.monotonic()
+    error_type = ""
+    reading: PromptReading | None = None
+    try:
+        reading = _executor.submit(reader, prompt_text[:MAX_PROMPT_CHARS], today).result(
+            timeout=timeout
+        )
+    except NotConfigured:
+        error_type = "NotConfigured"
+    except FutureTimeout:
+        error_type = "Timeout"
+    except ValidationError:
+        error_type = "InvalidResponse"
+    except Exception as error:  # any SDK/network error: the rules read the PROMPT instead
+        error_type = type(error).__name__
+    dropped = 0
+    if reading is not None:
+        line = _plain(prompt_text)
+        updates: dict[str, Any] = {}
+        for field_name in ("owner", "reviewer"):
+            name = getattr(reading, field_name)
+            if name and _plain(name) not in line:
+                updates[field_name] = None
+                dropped += 1
+        due = reading.deadline
+        if due is not None and not (today <= due <= today + timedelta(days=366)):
+            updates["deadline"] = None
+            dropped += 1
+        reading = reading.model_copy(update=updates)
+    logger.info(
+        "ai_prompt_call",
+        extra={
+            "provider": provider.name,
+            "model": provider.model,
+            "latency_ms": round((time.monotonic() - started) * 1000),
+            "success": reading is not None,
+            "error_type": error_type,
+            "dropped": dropped,
+        },
+    )
+    return reading
 
 
 def gemini_api_key(secret_name: str, project: str) -> Callable[[], str]:

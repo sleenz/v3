@@ -7,7 +7,8 @@ from datetime import date, datetime, timedelta
 
 from pydantic import BaseModel
 
-from app import clock, recurring
+from app import clock, outbox, recurring
+from app.events import should_wait
 from app.gmail import GmailAuthError, GmailClient
 from app.models import (
     OPEN_STATUSES,
@@ -51,6 +52,7 @@ class ChangesRun(BaseModel):  # counts only (no names or emails in logs)
     baseline: bool = False
     emailed: int = 0
     not_sent: int = 0
+    waiting: int = 0  # outside working hours: sent at the next Workday start (section 22)
 
 
 def _state_row(task: Task, notified_doer: str, notified_at: datetime | None) -> StateRow:
@@ -85,6 +87,7 @@ def run_changes(store: SheetStore, gmail: GmailClient, sheet_url: str) -> Change
 
     staff = store.staff()
     sender_name = store.config().sender_name
+    closed = should_wait(store)
     rows: dict[str, StateRow] = {}
     for task in tasks:
         previous = state.get(task.id)
@@ -99,6 +102,9 @@ def run_changes(store: SheetStore, gmail: GmailClient, sheet_url: str) -> Change
         person = find_person(doer, staff)
         if person is not None and person.paused:
             continue  # v1.4 decision 12: stays pending until `resume`
+        if closed:
+            run.waiting += 1  # stays pending: the first run after Workday start sends it
+            continue
         try:
             email = _assignment_with_files(task, staff, sheet_url, gmail)
         except MissingEmail:
@@ -108,7 +114,7 @@ def run_changes(store: SheetStore, gmail: GmailClient, sheet_url: str) -> Change
             logger.warning("assignment_not_sent", extra={"task_id": task.id})
             continue
         try:
-            gmail.send(email, sender_name)
+            sent = gmail.send(email, sender_name)
         except GmailAuthError:
             raise
         except Exception as error:
@@ -119,6 +125,8 @@ def run_changes(store: SheetStore, gmail: GmailClient, sheet_url: str) -> Change
             )
             continue
         sent_at = clock.now()
+        if sent is not None:
+            outbox.record(store, "Email", sent.id, doer, [task.id], "assigned", sent.thread_id)
         rows[task.id] = _state_row(task, doer, sent_at)
         run.emailed += 1
         # Record each send at once, so a crash later in the run cannot cause a second email.
@@ -170,7 +178,9 @@ def send_assignment(store: SheetStore, gmail: GmailClient, task: Task, sheet_url
     if person is None or person.paused or not person.email.strip():
         return False
     email = _assignment_with_files(task, staff, sheet_url, gmail)
-    gmail.send(email, store.config().sender_name)
+    sent = gmail.send(email, store.config().sender_name)
+    if sent is not None:
+        outbox.record(store, "Email", sent.id, person.name, [task.id], "assigned", sent.thread_id)
     state = store.state()
     state[task.id] = _state_row(task, task.doer.strip(), clock.now())
     store.write_state(list(state.values()))
@@ -347,6 +357,49 @@ def personal_buckets(
     return overdue, due_soon, stale
 
 
+def manager_extras(
+    store: SheetStore,
+    tasks: list[Task],
+    staff: list[StaffMember],
+    config: AppConfig,
+    today: date,
+) -> list[tuple[str, list[str]]]:
+    """The manager's extra sections: people over the load threshold, interns leaving who still
+    own Catalog reports, AI unavailable in the last 24 h, Recurring rows that cannot be used."""
+    leaving_by = today + timedelta(days=config.leaving_warning_days)
+    catalog = store.catalog()
+    leaving = []
+    for person in staff:
+        end = person.internship_end
+        if person.role != "Intern" or end is None or not today <= end <= leaving_by:
+            continue
+        owned = [e.catalog_id for e in catalog if find_person(e.default_owner, [person])]
+        if owned:
+            leaving.append(
+                f"{person.name} leaves {end:%d %b %Y}; default owner of {', '.join(owned)}"
+            )
+    since = today - timedelta(days=1)
+    ai_down = sum(
+        1 for t in tasks if "AI unavailable" in t.flags and t.start is not None and t.start >= since
+    )
+    return [
+        (
+            "Over the load threshold",
+            [
+                f"{p.name}: load {load_ratio(p):g} (threshold {config.overload_threshold:g})"
+                for p in staff
+                if p.role != "Manager" and load_ratio(p) > config.overload_threshold
+            ],
+        ),
+        ("Interns leaving who still own Catalog reports", leaving),
+        ("AI unavailable (last 24 h)", [f"{ai_down} request(s)"] if ai_down else []),
+        (
+            "Recurring rows skipped (fix them in the Recurring tab)",
+            recurring_problems(store, today),
+        ),
+    ]
+
+
 def run_digest(
     store: SheetStore, gmail: GmailClient, sheet_url: str, now: datetime | None = None
 ) -> DigestRun:
@@ -381,39 +434,10 @@ def run_digest(
     if not config.manager_email.strip():
         logger.warning("manager_digest_skipped_no_email")
         return run
-    leaving_by = today + timedelta(days=config.leaving_warning_days)
-    catalog = store.catalog()
-    leaving = []
-    for person in staff:
-        end = person.internship_end
-        if person.role != "Intern" or end is None or not today <= end <= leaving_by:
-            continue
-        owned = [e.catalog_id for e in catalog if find_person(e.default_owner, [person])]
-        if owned:
-            leaving.append(
-                f"{person.name} leaves {end:%d %b %Y}; default owner of {', '.join(owned)}"
-            )
-    since = today - timedelta(days=1)
-    ai_down = sum(
-        1 for t in tasks if "AI unavailable" in t.flags and t.start is not None and t.start >= since
-    )
     sections = [
         ("Awaiting approval", [task_line(t) for t in tasks if t.status == "Proposed"]),
         ("Overdue", [task_line(t) for t in open_tasks if t.due_date and t.due_date < today]),
-        (
-            "Over the load threshold",
-            [
-                f"{p.name}: load {load_ratio(p):g} (threshold {config.overload_threshold:g})"
-                for p in staff
-                if p.role != "Manager" and load_ratio(p) > config.overload_threshold
-            ],
-        ),
-        ("Interns leaving who still own Catalog reports", leaving),
-        ("AI unavailable (last 24 h)", [f"{ai_down} request(s)"] if ai_down else []),
-        (
-            "Recurring rows skipped (fix them in the Recurring tab)",
-            recurring_problems(store, today),
-        ),
+        *manager_extras(store, tasks, staff, config, today),
     ]
     email = manager_digest(config.manager_email.strip(), sections, sheet_url, label)
     if email is not None:

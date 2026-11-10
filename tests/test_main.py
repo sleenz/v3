@@ -90,8 +90,13 @@ def test_changes_recurring_and_digest_endpoints():
     changes = client.post("/jobs/changes").json()
     assert changes["job"] == "changes" and changes["baseline"] is True
     assert client.post("/jobs/recurring").json()["job"] == "recurring"
-    digest = client.post("/jobs/digest").json()
-    assert digest == {"job": "digest", "personal_sent": 0, "manager_sent": False, "failed": 0}
+    # Replaced by /jobs/reminders (section 22): an old Scheduler job sends nothing.
+    assert client.post("/jobs/digest").json() == {
+        "job": "digest",
+        "replaced_by": "/jobs/reminders",
+    }
+    reminders = client.post("/jobs/reminders").json()
+    assert reminders["job"] == "reminders" and reminders["working_day"] is True
 
 
 def test_chat_endpoint(fixture_text):

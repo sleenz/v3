@@ -27,17 +27,17 @@ import logging
 import re
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, SecretStr
 
-from app import clock
+from app import clock, outbox
 from app.chat import logged_text, person_tasks_text
 from app.commands import parse_command
-from app.extract.prompt import assignee, overrides, parse_prompt
+from app.extract.prompt import assignee, parse_prompt
 from app.extract.rules import find_dates
 from app.gmail import GmailClient
 from app.jobs import personal_buckets
@@ -56,8 +56,13 @@ from app.models import (
     wa_number,
 )
 from app.notify import with_files
-from app.pipeline import SERVICE_USER, Services, process_request
-from app.route import NEEDS_REVIEW_FLAG, match_staff_name, sender_assignment
+from app.pipeline import (
+    SERVICE_USER,
+    Services,
+    decide_prompt,
+    process_request,
+)
+from app.route import NEEDS_REVIEW_FLAG, sender_assignment
 from app.sheets import SheetStore
 
 logger = logging.getLogger("grc.whatsapp")
@@ -122,6 +127,11 @@ _YES = frozenset(
 # --- Meta Graph API and Cloud Tasks -------------------------------------------------------------
 
 
+def template_text(value: str) -> str:
+    """A template parameter: one line, no tabs, no long runs of spaces, at most 1,000 chars."""
+    return re.sub(r"\s+", " ", value).strip()[:1000] or "-"
+
+
 class WhatsAppError(Exception):
     """A Graph API call failed. Carries the HTTP status only (the body can quote messages)."""
 
@@ -135,7 +145,16 @@ class WhatsAppClient(Protocol):
         """Send a text; returns the message ID (v1.4: replies to it carry it as context)."""
         ...
 
-    def send_template(self, to: str, name: str, language: str, params: list[str]) -> None: ...
+    def send_template(
+        self,
+        to: str,
+        name: str,
+        language: str,
+        params: list[str],
+        payloads: Sequence[str] = (),
+    ) -> str | None:
+        """A template; `payloads` fill its quick-reply buttons in order (returned on a tap)."""
+        ...
 
     def download_media(self, media_id: str) -> bytes: ...
 
@@ -187,16 +206,34 @@ class GraphWhatsApp:
             to, {"type": "text", "text": {"preview_url": False, "body": text[:MAX_TEXT_CHARS]}}
         )
 
-    def send_template(self, to: str, name: str, language: str, params: list[str]) -> None:
-        parameters = [{"type": "text", "text": value} for value in params]
-        self._send(
+    def send_template(
+        self,
+        to: str,
+        name: str,
+        language: str,
+        params: list[str],
+        payloads: Sequence[str] = (),
+    ) -> str | None:
+        # Template parameters may not hold line breaks, tabs or 4+ spaces in a row (Meta).
+        parameters = [{"type": "text", "text": template_text(value)} for value in params]
+        components: list[dict[str, Any]] = [{"type": "body", "parameters": parameters}]
+        components += [
+            {
+                "type": "button",
+                "sub_type": "quick_reply",
+                "index": str(index),
+                "parameters": [{"type": "payload", "payload": payload}],
+            }
+            for index, payload in enumerate(payloads)
+        ]
+        return self._send(
             to,
             {
                 "type": "template",
                 "template": {
                     "name": name,
                     "language": {"code": language},
-                    "components": [{"type": "body", "parameters": parameters}],
+                    "components": components,
                 },
             },
         )
@@ -377,6 +414,9 @@ def _reply(ctx: WaContext, to: str, text: str, task_id: str = "") -> None:
         return
     if not message_id:
         return
+    person = _person(ctx.store, to)
+    outbox.record(ctx.store, "WhatsApp", message_id, person.name if person else "", [task_id],
+                  "reply")  # fmt: skip
     now = clock.now()
     sent = WaPending(
         key=message_id,
@@ -670,11 +710,14 @@ def _apply_late_prompt(task_id: str, prompt: str, ctx: WaContext, now: datetime)
     replies: list[str] = []
     audits: list[tuple[str, str, str]] = []
     flags = list(task.flags)
-    asked = overrides(prompt, now.date())
-    name = asked.assign_to
-    if name and match_staff_name(name, store.staff()) is None:
-        replies.append(f'I couldn\'t find "{name}" in the Staff tab, so the owner is unchanged.')
-    elif name:
+    decision = decide_prompt(prompt, now.date(), store.staff(), ctx.services.ai)
+    name = decision.owner
+    flags += [f for f in decision.flags if "not found" not in f and "couldn't read" not in f]
+    if not name and any("not found" in f or "couldn't read" in f for f in decision.flags):
+        replies.append("I couldn't tell who to assign it to, so the owner is unchanged.")
+    if decision.reviewer is None and any("reviewer" in f for f in decision.flags):
+        replies.append("I couldn't find the reviewer in the Staff tab.")
+    if name:
         current = RouteResult(
             owner=task.owner or None,
             division=task.division or None,
@@ -682,7 +725,7 @@ def _apply_late_prompt(task_id: str, prompt: str, ctx: WaContext, now: datetime)
             rule=5,
             note=task.routing_note,
         )
-        due = asked.due or task.due_date
+        due = decision.due or task.due_date
         routed = sender_assignment(current, name, store.staff(), now.date(), due)
         flags = [f for f in flags if f != NEEDS_REVIEW_FLAG] + routed.flags
         changes.update(
@@ -695,19 +738,15 @@ def _apply_late_prompt(task_id: str, prompt: str, ctx: WaContext, now: datetime)
         )
         replies.append(f"proposed owner is now {routed.owner}")
         audits.append(("Owner", task.owner, str(routed.owner)))
-    if asked.reviewer:
-        person = match_staff_name(asked.reviewer, store.staff())
-        if person is None:
-            replies.append(f'I couldn\'t find reviewer "{asked.reviewer}" in the Staff tab.')
-        else:
-            changes.update({"Reviewer": person.name, "Needs review": "Yes"})
-            replies.append(f"reviewer is {person.name}")
-            audits.append(("Reviewer", task.reviewer, person.name))
-    if asked.due is not None:
-        flags = [f for f in flags if f not in (DEADLINE_FLAG, DEFAULT_DUE_FLAG)] + asked.flags
-        changes["Due date"] = asked.due
-        replies.append(f"due {_day(asked.due)}")
-        audits.append(("Due date", _day(task.due_date), _day(asked.due)))
+    if decision.reviewer:
+        changes.update({"Reviewer": decision.reviewer, "Needs review": "Yes"})
+        replies.append(f"reviewer is {decision.reviewer}")
+        audits.append(("Reviewer", task.reviewer, decision.reviewer))
+    if decision.due is not None:
+        flags = [f for f in flags if f not in (DEADLINE_FLAG, DEFAULT_DUE_FLAG)]
+        changes["Due date"] = decision.due
+        replies.append(f"due {_day(decision.due)}")
+        audits.append(("Due date", _day(task.due_date), _day(decision.due)))
         store.edit_wa_pending(lambda rows: _close_question(rows, task_id, now))
     changes["Flag"] = "; ".join(dict.fromkeys(flags))
     store.update_task(task_id, changes)
@@ -876,7 +915,7 @@ def _log_draft(draft: WaPending, ctx: WaContext, now: datetime) -> str:
     )
     result = process_request(raw, ctx.services)
     # A deadline typed in the PROMPT is the sender's own: no "Reply YES" question (section 21).
-    ask = result.created and overrides(draft.prompt, now.date()).due is None
+    ask = result.created and not result.due_from_prompt
     if ask:
         flags = "; ".join(dict.fromkeys([*result.flags, DEADLINE_FLAG]))
         store.update_task(result.task_id, {"Flag": flags})

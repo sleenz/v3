@@ -25,6 +25,7 @@ from app.models import (
     RECURRING_REQUIRED_COLUMNS,
     REQUIRED_COLUMNS,
     REQUIRED_CONFIG_SETTINGS,
+    SERVICE_TABS,
     WA_PENDING_COLUMNS,
     AppConfig,
     AuditEntry,
@@ -44,11 +45,13 @@ MASTER = "Master"
 LOADED_TABS = ("Master", "Staff", "Catalog", "LetterCodes", "Config", "_state", "_failures")
 
 DATE_COLUMNS = frozenset(
-    {"Start / received", "Due date", "Submitted date", "Internship end date", "First due date"}
-)
+    {"Start / received", "Due date", "Submitted date", "Internship end date", "First due date",
+     "Date"}
+)  # fmt: skip
 DATETIME_COLUMNS = frozenset(
-    {"Last updated", "Notified at", "Timestamp", "Last at", "Created at", "Updated at"}
-)
+    {"Last updated", "Notified at", "Timestamp", "Last at", "Created at", "Updated at",
+     "Sent at", "Queued at"}
+)  # fmt: skip
 WA_PENDING = "_wa_pending"
 RECURRING = "Recurring"
 _SERIAL_EPOCH = datetime(1899, 12, 30)
@@ -630,6 +633,45 @@ class SheetStore:
             self._tabs[WA_PENDING] = tab
             self._rewrite(WA_PENDING, [row.model_dump(by_alias=True) for row in rows])
             return result
+
+    # Reminder schedule tabs (DESIGN section 22) ------------------------------------------------
+
+    def _fresh_service(self, name: str) -> TabData:
+        """A hidden service tab, re-read (another run may have written it). Missing tab or
+        column: SchemaError naming it, so /health and the job say what to add."""
+        if name not in set(self._backend.sheet_titles()):
+            raise SchemaError([f"missing tab {name}"])
+        [values] = self._backend.get([quote_tab(name)])
+        tab = TabData.from_values(name, values)
+        missing = [column for column in SERVICE_TABS[name] if column not in tab.header]
+        if missing:
+            raise SchemaError([f"{name} is missing column(s): {', '.join(missing)}"])
+        self._tabs[name] = tab
+        return tab
+
+    def service_rows[Model: BaseModel](self, name: str, model: type[Model]) -> list[Model]:
+        tab = self._fresh_service(name)
+        first = SERVICE_TABS[name][0]
+        records = ((n, r) for n, r in tab.records() if str(r.get(first, "")).strip())
+        return _parse(model, tab, records)
+
+    def append_service(self, name: str, rows: list[BaseModel]) -> None:
+        if not rows:
+            return
+        with self._lock:
+            tab = self._fresh_service(name)
+            encoded = [tab.encode(row.model_dump(by_alias=True)) for row in rows]
+            self._backend.append(quote_tab(name) + "!A1", encoded)
+
+    def rewrite_service(self, name: str, rows: list[BaseModel]) -> None:
+        """Replace a service tab's rows (used to drop sent queue items and old rows)."""
+        with self._lock:
+            self._fresh_service(name)
+            self._rewrite(name, [row.model_dump(by_alias=True) for row in rows])
+
+    def missing_service_tabs(self) -> list[str]:
+        titles = set(self._backend.sheet_titles())
+        return [name for name in SERVICE_TABS if name not in titles]
 
     def _rewrite(self, tab_name: str, records: list[dict[str, Any]]) -> None:
         with self._lock:

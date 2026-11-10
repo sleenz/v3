@@ -103,6 +103,45 @@ def match_staff_name(name: str, staff: list[StaffMember]) -> StaffMember | None:
     return None
 
 
+FUZZY_CUTOFF = 0.8  # how close a typed name must be to a Staff name (difflib ratio)
+
+
+def fuzzy_staff_name(name: str, staff: list[StaffMember]) -> StaffMember | None:
+    """A typed name with a typo ("Enzzo"): the one Staff member whose full name or first name
+    is close enough. None when nobody is close or two people are equally close."""
+    from difflib import SequenceMatcher
+
+    wanted = _normalise(name).strip(" .,!")
+    if len(wanted) < 3:
+        return None
+    scores: dict[str, tuple[float, StaffMember]] = {}
+    for person in staff:
+        full = _normalise(person.name)
+        parts = [full, *full.split(" ")[:1]]
+        best = max(SequenceMatcher(None, wanted, part).ratio() for part in parts)
+        if best >= FUZZY_CUTOFF and best > scores.get(person.name, (0.0, person))[0]:
+            scores[person.name] = (best, person)
+    ranked = sorted(scores.values(), key=lambda item: item[0], reverse=True)
+    if not ranked or (len(ranked) > 1 and ranked[1][0] == ranked[0][0]):
+        return None
+    return ranked[0][1]
+
+
+def staff_mentioned(text: str, staff: list[StaffMember]) -> list[StaffMember]:
+    """Staff named in `text` by full name, or by a first name only one person has."""
+    normalised = _normalise(text)
+    firsts: dict[str, list[StaffMember]] = {}
+    for person in staff:
+        firsts.setdefault(_normalise(person.name).split(" ")[0], []).append(person)
+    found: list[StaffMember] = []
+    for person in staff:
+        first = _normalise(person.name).split(" ")[0]
+        by_first = len(firsts.get(first, [])) == 1 and _contains_phrase(normalised, first)
+        if _contains_phrase(normalised, person.name) or by_first:
+            found.append(person)
+    return found
+
+
 def sender_assignment(
     routed: RouteResult,
     name: str,
