@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field, SecretStr
 from app import clock
 from app.chat import logged_text, person_tasks_text
 from app.commands import parse_command
-from app.extract.prompt import assignee, overrides, parse_prompt
+from app.extract.prompt import assignee, parse_prompt
 from app.extract.rules import find_dates
 from app.gmail import GmailClient
 from app.jobs import personal_buckets
@@ -59,9 +59,8 @@ from app.notify import with_files
 from app.pipeline import (
     SERVICE_USER,
     Services,
-    choose_sender_owner,
+    decide_prompt,
     process_request,
-    staff_match,
 )
 from app.route import NEEDS_REVIEW_FLAG, sender_assignment
 from app.sheets import SheetStore
@@ -676,13 +675,14 @@ def _apply_late_prompt(task_id: str, prompt: str, ctx: WaContext, now: datetime)
     replies: list[str] = []
     audits: list[tuple[str, str, str]] = []
     flags = list(task.flags)
-    asked = overrides(prompt, now.date())
-    choice = choose_sender_owner(prompt, asked, store.staff(), ctx.services.ai)
-    name = choice.name
-    flags += [f for f in choice.flags if "not found" not in f and "couldn't read" not in f]
-    if not name and choice.flags:
+    decision = decide_prompt(prompt, now.date(), store.staff(), ctx.services.ai)
+    name = decision.owner
+    flags += [f for f in decision.flags if "not found" not in f and "couldn't read" not in f]
+    if not name and any("not found" in f or "couldn't read" in f for f in decision.flags):
         replies.append("I couldn't tell who to assign it to, so the owner is unchanged.")
-    elif name:
+    if decision.reviewer is None and any("reviewer" in f for f in decision.flags):
+        replies.append("I couldn't find the reviewer in the Staff tab.")
+    if name:
         current = RouteResult(
             owner=task.owner or None,
             division=task.division or None,
@@ -690,7 +690,7 @@ def _apply_late_prompt(task_id: str, prompt: str, ctx: WaContext, now: datetime)
             rule=5,
             note=task.routing_note,
         )
-        due = asked.due or task.due_date
+        due = decision.due or task.due_date
         routed = sender_assignment(current, name, store.staff(), now.date(), due)
         flags = [f for f in flags if f != NEEDS_REVIEW_FLAG] + routed.flags
         changes.update(
@@ -703,19 +703,15 @@ def _apply_late_prompt(task_id: str, prompt: str, ctx: WaContext, now: datetime)
         )
         replies.append(f"proposed owner is now {routed.owner}")
         audits.append(("Owner", task.owner, str(routed.owner)))
-    if asked.reviewer:
-        person, _ = staff_match(asked.reviewer, store.staff())
-        if person is None:
-            replies.append(f'I couldn\'t find reviewer "{asked.reviewer}" in the Staff tab.')
-        else:
-            changes.update({"Reviewer": person.name, "Needs review": "Yes"})
-            replies.append(f"reviewer is {person.name}")
-            audits.append(("Reviewer", task.reviewer, person.name))
-    if asked.due is not None:
-        flags = [f for f in flags if f not in (DEADLINE_FLAG, DEFAULT_DUE_FLAG)] + asked.flags
-        changes["Due date"] = asked.due
-        replies.append(f"due {_day(asked.due)}")
-        audits.append(("Due date", _day(task.due_date), _day(asked.due)))
+    if decision.reviewer:
+        changes.update({"Reviewer": decision.reviewer, "Needs review": "Yes"})
+        replies.append(f"reviewer is {decision.reviewer}")
+        audits.append(("Reviewer", task.reviewer, decision.reviewer))
+    if decision.due is not None:
+        flags = [f for f in flags if f not in (DEADLINE_FLAG, DEFAULT_DUE_FLAG)]
+        changes["Due date"] = decision.due
+        replies.append(f"due {_day(decision.due)}")
+        audits.append(("Due date", _day(task.due_date), _day(decision.due)))
         store.edit_wa_pending(lambda rows: _close_question(rows, task_id, now))
     changes["Flag"] = "; ".join(dict.fromkeys(flags))
     store.update_task(task_id, changes)
@@ -884,7 +880,7 @@ def _log_draft(draft: WaPending, ctx: WaContext, now: datetime) -> str:
     )
     result = process_request(raw, ctx.services)
     # A deadline typed in the PROMPT is the sender's own: no "Reply YES" question (section 21).
-    ask = result.created and overrides(draft.prompt, now.date()).due is None
+    ask = result.created and not result.due_from_prompt
     if ask:
         flags = "; ".join(dict.fromkeys([*result.flags, DEADLINE_FLAG]))
         store.update_task(result.task_id, {"Flag": flags})

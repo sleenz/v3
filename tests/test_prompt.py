@@ -72,6 +72,8 @@ def test_reviewer(text, name):
         ("3 hari lagi", date(2026, 10, 29)),
         ("dalam 2 minggu", date(2026, 11, 9)),
         ("tomorrow", date(2026, 10, 27)),
+        ("the day after tomorrow", date(2026, 10, 28)),
+        ("deadline lusa", date(2026, 10, 28)),
         ("deadline 5 days from now", date(2026, 10, 30)),  # Saturday -> the Friday before
         ("in 6 days", date(2026, 10, 30)),  # Sunday -> the Friday before
         ("deadline 20 Nov", date(2026, 11, 20)),

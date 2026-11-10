@@ -84,6 +84,7 @@ _COUNTED = [
         re.IGNORECASE,
     ),
 ]
+_DAY_AFTER = re.compile(r"\b(?:(?:the\s+)?day\s+after\s+tomorrow|lusa)\b", re.IGNORECASE)
 _TOMORROW = re.compile(r"\b(?:tomorrow|besok)\b", re.IGNORECASE)
 _DEADLINE_WORD = re.compile(
     r"\b(?:deadline|due(?:\s+date)?|by|before|sebelum|tenggat|batas\s+waktu|paling\s+lambat)\b",
@@ -161,6 +162,8 @@ def deadline(prompt: str, today: date) -> tuple[date | None, list[str]]:
         if found:
             days = int(found.group(1)) * _UNITS[found.group(2).lower()]
             return off_weekend(today + timedelta(days=days)), []
+    if _DAY_AFTER.search(prompt):
+        return off_weekend(today + timedelta(days=2)), []
     if _TOMORROW.search(prompt):
         return off_weekend(today + timedelta(days=1)), []
     hits = find_dates(prompt, today)

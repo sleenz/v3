@@ -736,21 +736,24 @@ reads a PROMPT for who or when).
    untuk`, `suruh <name> buat`) also names the owner: the shortest text before `to`. A phrase
    like "ask the bank to confirm" names nobody in Staff, so it is flagged and the rules' owner
    stays. The routing note says `(WhatsApp PROMPT)` or `(Email PROMPT)`.
-   **Amended 10 Nov 2026 (owner's approval):** the owner is read in this order, and the first
-   that gives one Staff member wins:
-   1. the name the rules read (`assign to X`, `ask X to`, and now `assign X to …` /
-      `tugaskan X untuk …`), matched to Staff; a small typo is accepted (difflib ratio ≥ 0.8 to
-      a full or first name, one clear best) and flagged `PROMPT: "<typed>" read as <name>`;
-   2. a Staff member named anywhere in a PROMPT that has an assign word (`assign`, `ask`,
-      `minta`, `kasih`, `tugaskan`, `suruh`): full name, or a first name only one person has,
-      not counting the reviewer ("assign blablabla enzo");
-   3. **the AI, as a fallback:** a separate Gemini call that gets only the PROMPT line (masked,
-      at most 1,000 characters; never the request text or a PDF) and returns the name as
-      written. The name must appear in the line (else it is discarded) and is then matched to
-      Staff like a typed name. Flag `PROMPT: owner read by AI as <name> - check`.
-   If none works, the rules' owner stays and the task is flagged `PROMPT: "<name>" not found in
-   Staff` or `PROMPT: couldn't read who to assign`. An AI failure never loses the request (D15).
-   The reviewer uses steps 1's matching (with typo) but never the AI.
+   **Amended 10 Nov 2026 (owner's approval): the AI reads the PROMPT first, the rules are the
+   fallback and the check** (`pipeline.decide_prompt`):
+   - One Gemini call per PROMPT gets today's date and **only the PROMPT line** (masked, at most
+     1,000 characters; never the request text or a PDF) and returns `owner`, `reviewer`,
+     `deadline`. Names not written in the line are dropped; so is a deadline in the past or more
+     than a year away. Anything the AI supplied flags the task `PROMPT read by AI - check`.
+   - Owner and reviewer: the AI's name, matched to Staff by rules (exact, then a small typo:
+     difflib ratio ≥ 0.8 to a full or first name with one clear best, flagged `PROMPT: owner
+     "<typed>" read as <name>`). If it matches nobody, the rules decide: the name in
+     `assign to X` / `ask X to` / `assign X to …` / `tugaskan X untuk …`, else a Staff member
+     named anywhere in a PROMPT with an assign word (`assign`, `ask`, `minta`, `kasih`,
+     `tugaskan`, `suruh`), not counting the reviewer. When the AI and the rules name different
+     people, the AI's is used and flagged `PROMPT: owner unclear (rules read <name>) - check`.
+   - Deadline: when the rules also read a date, **the rules' date wins** and a different AI date
+     is flagged `PROMPT: deadline unclear (AI read <date>) - check`; otherwise the AI's date.
+   - With the AI off, failing or timing out, the rules alone decide (as before), so a request is
+     never lost (D15). Nothing found is flagged `PROMPT: "<name>" not found in Staff` or
+     `PROMPT: couldn't read who to assign`.
 3. **Reviewer:** `reviewer <name>` (also `with reviewer`, `reviewer is`, `reviewed by`,
    `direview oleh`), matched against Staff like the owner. A match fills `Reviewer` and sets
    `Needs review` = `Yes`. An unknown name is flagged `PROMPT: reviewer "<name>" not found in

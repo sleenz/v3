@@ -370,6 +370,7 @@ class TaskResult(BaseModel):
     due_date: date | None = None
     flags: list[str] = Field(default_factory=list)
     files_url: str = ""
+    due_from_prompt: bool = False  # the sender's PROMPT set the deadline (section 21)
 
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")

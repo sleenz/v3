@@ -11,10 +11,10 @@ wrong, stop and ask; do not invent behaviour.**
 - Python 3.12, FastAPI, type hints everywhere, pydantic models for every data shape.
 - The Google Sheet is the only store. Access columns **by header name only**, through `SheetStore`.
 - The AI never chooses the assignee. Routing lives in `app/route.py` and is deterministic.
-  One exception, approved by the owner on 10 Nov 2026 (DESIGN section 21): when the rules cannot
-  read the name in the sender's own PROMPT line, the AI may read it from **that line only** (no
-  request text, no PDF). The name must appear in the line and must match Staff by rules; the
-  task is flagged and still waits for the manager's approval.
+  One exception, approved by the owner on 10 Nov 2026 (DESIGN section 21): the AI reads the
+  sender's own PROMPT line (**that line only**: no request text, no PDF) for owner, reviewer and
+  deadline, with the rules as fallback and check. Names must appear in the line and are matched
+  to Staff by rules; the task is flagged and still waits for the manager's approval.
 - Keep `extract/rules.py`, `extract/clean.py` and `route.py` pure (no network, no Google clients) so
   they are fully unit-testable.
 - All Google APIs sit behind small classes (`SheetStore`, `DriveStore`, `GmailClient`, `ChatClient`,

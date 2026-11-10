@@ -236,9 +236,14 @@ class FakeAIProvider:
         error: Exception | None = None,
         delay: float = 0.0,
         assignee: str | None = None,
+        reading: dict[str, Any] | None = None,
     ):
-        self.assignee = assignee
-        self.assignee_calls: list[str] = []
+        from app.extract.ai import PromptReading
+
+        self.reading: PromptReading | None = None
+        if reading is not None or assignee is not None:
+            self.reading = PromptReading.model_validate({"owner": assignee, **(reading or {})})
+        self.prompt_calls: list[str] = []
         if isinstance(result, dict):
             result = AIResult.model_validate_json(json.dumps(result, default=str))
         self.result = result
@@ -269,11 +274,11 @@ class FakeAIProvider:
             raise self.error
         return self.result
 
-    def read_assignee(self, prompt_text: str) -> str | None:
-        self.assignee_calls.append(prompt_text)
+    def read_prompt(self, prompt_text: str, today: date):
+        self.prompt_calls.append(prompt_text)
         if self.error is not None:
             raise self.error
-        return self.assignee
+        return self.reading
 
 
 class FakeGmailClient:
