@@ -235,10 +235,11 @@ one alert. Against `GRC_Tracker_Tabs_v2.xlsx` that means:
 
 ### 1d. Reminder schedule (DESIGN section 22)
 Replaces the 09:00 digest and the old daily WhatsApp reminder.
-- [ ] Apps Script: paste the new `apps_script/audit.gs` and run **`installServiceTabs()`** once.
-      It adds the hidden tabs `_outbox`, `_reminders_sent` and `_event_queue` with their headers.
-      Protect them like `_state`. Until they exist, `/health` lists them as warnings and reminders
-      do not run.
+- [ ] Apps Script: paste the new `apps_script/audit.gs` and run **`installServiceTabs()`** (again
+      after each update; it only adds what is missing). It adds the hidden tabs `_outbox`,
+      `_reminders_sent`, `_event_queue`, `_conversations`, `_snooze`, `_wa_window` and the visible
+      **`ProgressLog`** (who changed what, from which channel; undo reads it). Protect them like
+      `_state` / `AuditLog`. Until they exist, `/health` lists them as warnings.
 - [ ] Config (all optional; the defaults are shown; edit any time, no deploy needed):
 
       | Setting | Default | Meaning |
@@ -259,7 +260,15 @@ Replaces the 09:00 digest and the old daily WhatsApp reminder.
       (`Yes` or the date the person agreed). `Reminders paused` = `Yes` still stops everything.
 - [ ] Scheduler: run `deploy/setup_scheduler.sh` (adds `grc-reminders`, deletes `grc-digest` and
       `grc-wa-reminders`).
-- [ ] WhatsApp only: submit the three templates in `whatsapp_templates/` (section 9b).
+- [ ] WhatsApp only: submit the four templates in `whatsapp_templates/` (section 9b).
+- [ ] Tell the team how to update a task (DESIGN section 22):
+      - WhatsApp: tap **Lihat tugas** in a reminder → one card per task with **Update progres**
+        (25–100 %), **Selesai** or **Kirim review**, **Lainnya** (Selesai, Terhambat, Minta
+        perpanjangan, Ingatkan besok, Lihat file). Reviewers get **Approve / Return**; the
+        manager **Setuju / Tolak** for extensions. A question waits 30 minutes; `batal` cancels.
+      - Typed (WhatsApp or the first line of an email reply): `G-0012 70`, `70%` (in reply to a
+        message about one task), `blocked G-0012 <reason>`, `extend G-0012 20 Nov`, manager:
+        `approve extension G-0012` / `reject extension G-0012`, `snooze G-0012`, `undo`.
 
 ### 2. Google Cloud project and APIs
 - [ ] Done by `deploy/setup_gcp.sh` (APIs, Artifact Registry `cloud-run-source-deploy`, Cloud Tasks
@@ -391,7 +400,7 @@ BRI does this part in Meta; the service only needs the IDs and two secrets after
 - [ ] WhatsApp → Configuration → Webhook: callback URL
       `https://v2-git-1085688466076.asia-southeast2.run.app/wa/webhook`, the verify token above,
       then subscribe to the **messages** field.
-- [ ] WhatsApp Manager → Message templates → create the three templates in
+- [ ] WhatsApp Manager → Message templates → create the four templates in
       `whatsapp_templates/` exactly as written there: category *Utility*, language
       *Indonesian* (`id`), the body text with its example values, and one **quick-reply** button
       `Lihat tugas`. Wait for Meta's approval (until then the reminder falls back to email):
@@ -402,6 +411,8 @@ BRI does this part in Meta; the service only needs the IDs and two secrets after
       - `grc_ringkasan_manager` (10:15): "Ringkasan tim GRC hari ini: {{1}} terlambat, {{2}} jatuh
         tempo hari ini, {{3}} menunggu review, {{4}} menunggu persetujuan, {{5}} terhambat. Ketuk
         Lihat tugas untuk detail."
+      - `grc_update_tugas` (a notice when the person has not written in 24 hours): "Update tugas
+        GRC {{1}}: {{2}}. Ketuk Lihat tugas untuk detail."
       The old `grc_daily_reminder` is no longer sent and can be deleted. Templates are paid
       *utility* messages when the person has not written to the bot in the last 24 hours.
 - [ ] Sheet: add a `WhatsApp` column to **Staff** (international format, e.g. `+852 9123 4567`)

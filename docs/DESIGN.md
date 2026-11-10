@@ -841,7 +841,17 @@ command is added to that task's Notes, or answered with how to update. **It is n
 new request.** The hidden tabs come from the Apps Script `installServiceTabs()`; `/health`
 warns while one is missing.
 
-**Part B (approved, to build).** The tap on **Lihat tugas** opens the 24-hour window: up to 5
+**Part B (built 10 Nov 2026; `app/wa_ui.py`, `app/progress.py`).** Staging note: until part C,
+plain typed WhatsApp text that is not a command and does not reply to a bot message stays
+intake (as in section 17); decision 1 completes with part C's `request` intent. Taps,
+questions and commands typed in reply to a card or notice (`context.id` → `_outbox`) are
+updates. Every action is a section 19 command (`blocked`, `extend`, `approve extension`,
+`reject extension`, `snooze`, `undo`, `G-0012 70`, and `70%` in reply to a message about one
+task), so email replies get them too. Extension and snooze dates accept `20 Nov`, `20/11/2026`,
+`2026-11-20` and the section 21 forms (`this friday`, `in 3 days`). An overdue task cannot be
+snoozed (never past the due date). Notices on WhatsApp: `assigned` and `in_review` still go by
+email too (they carry the files); approved, returned, blocked and extension notices go by
+WhatsApp instead of email to WhatsApp-channel people. Specified: The tap on **Lihat tugas** opens the 24-hour window: up to 5
 task cards (earliest due first; the rest as a list), each "<ID> – <title>, due <date> (<n>
 days), progress <p>%, <status>" with [Update progres] [Kirim review | Selesai] [Lainnya].
 Update progres → list 25/50/75/90/100% → saved. Lainnya → list: Selesai (asks for proof),
