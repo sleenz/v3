@@ -19,7 +19,7 @@ the Cloud console; no terminal. All test text below is fake.
 | 3b | Body only `Mohon ditindaklanjuti, detail terlampir.` with a typed PDF letter attached that states a deadline (e.g. `paling lambat 20 November 2026`). | New `Proposed` row whose title, deliverables and due date come from the PDF, flagged `Deadline from attachment - check`. (Config `AI reads PDFs` blank or `Yes`.) |
 | 4 | From an address **not** in `Allowed senders` (e.g. a personal Gmail), any request. | No row, no reply. The email is marked read and labelled `GRC/Ignored`. |
 | 5 | Subject `Tolong cek printer`, body `Printer lantai 3 rusak, tolong dicek.` | New `Proposed` row routed by Rule 5 (no catalog match). |
-| 6 | In the sheet, set the test 1 row's `Status` to `Not Started` (with a Doer filled in). | Within 5 minutes (between 08:00 and 19:55 HK time) the Doer gets the assignment email. |
+| 6 | In the sheet, set the test 1 row's `Status` to `Not Started` (with a Doer filled in). | Within 2 minutes (between 10:00 and 19:00 HK time on a working day; otherwise at the next Workday start) the Doer gets the assignment email. |
 
 **When a test fails:** Cloud console > Logging > Logs Explorer, query
 
@@ -77,7 +77,7 @@ Set up Staff roles first (README §1b). Use a test task that is approved (`Not S
 | P1 | After `deploy/setup_scheduler.sh`, read the log for `gmail_watch`. | One `gmail_watch` line (not `gmail_watch_failed`). |
 | P2 | Send the bot a new request (test 1's text, new subject). Do **not** run the Gmail job. | Within about a minute: the `Proposed` row and the reply in the thread. |
 | P3 | Send two requests a few seconds apart. | Both logged once each; no duplicate rows. |
-| R1 | Recurring row: `R test` · `Yes` · `Test Q{Q} {YYYY}` · `Quarterly` · a deadline **5 days from today** · *(blank)* · `7` · a full-timer · the same person. Then Cloud Scheduler > `grc-recurring` > **Force run**. | A `Not Started` row titled for the previous quarter, Source `Recurring R test <date>`. Within 5 minutes (08:00–19:55) the Doer gets the assignment email. |
+| R1 | Recurring row: `R test` · `Yes` · `Test Q{Q} {YYYY}` · `Quarterly` · a deadline **5 days from today** · *(blank)* · `7` · a full-timer · the same person. Then Cloud Scheduler > `grc-recurring` > **Force run**. | A `Not Started` row titled for the previous quarter, Source `Recurring R test <date>`. Within 2 minutes (10:00–19:00 on a working day) the Doer gets the assignment email. |
 | R2 | Force run `grc-recurring` again. | No second row. |
 | R3 | Change the deadline to a Saturday 5 days away; rename the row `R test 2`; force run. | The row's `Due date` is the Friday before; its Original message says "moved from Sat …". |
 | R4 | Set the row's Doer to a name not in Staff; as the manager send `recurring`. | The reply lists the row under "Not used until fixed"; `/health` warns `Recurring: 1 row(s) cannot be used`. |

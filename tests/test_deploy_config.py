@@ -232,3 +232,8 @@ def test_whatsapp_templates_match_what_the_code_sends():
         assert not body["text"].startswith("{{") and not body["text"].endswith("}}")
         buttons = next(c for c in spec["components"] if c["type"] == "BUTTONS")["buttons"]
         assert [b["text"] for b in buttons] == ["Lihat tugas"]
+
+
+def test_change_job_runs_every_two_minutes():
+    scheduler = (ROOT / "deploy" / "setup_scheduler.sh").read_text(encoding="utf-8")
+    assert "grc-changes|*/2 8-19 * * *|/jobs/changes" in scheduler

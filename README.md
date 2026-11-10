@@ -15,7 +15,7 @@ Email to the bot mailbox ─┐                         ┌─> Master row (stat
  (allowed senders only)   ├─> process_request() ────┤   + reply to the sender in the thread
 Google Chat message ──────┘   clean · rules · (AI)  └─> Drive folder "G-0012 – <title>"
                               · route · write
-Manager sets Status ──> /jobs/changes (every 5 min) ──> assignment email to the Doer
+Manager sets Status ──> /jobs/changes (every 2 min) ──> assignment email to the Doer
 New mail ──> Gmail push (Pub/Sub) ──> /jobs/gmail-push: logged within about a minute
 Cloud Scheduler ──> /jobs/gmail (10 min, safety net) · /jobs/recurring (07:00, Recurring tab)
                     · /jobs/reminders (weekdays every 15 min: 10:00 morning, 10:15 manager,
@@ -370,7 +370,7 @@ curl https://v2-git-1085688466076.asia-southeast2.run.app/health
 
 ### 8. Cloud Scheduler (all times Asia/Hong_Kong)
 - [ ] `deploy/setup_scheduler.sh` creates or updates: `grc-gmail` (every 10 min), `grc-changes`
-      (every 5 min, 08:00–19:55), `grc-recurring` (daily 07:00), **`grc-reminders`** (weekdays
+      (every 2 min, 08:00–19:58), `grc-recurring` (daily 07:00), **`grc-reminders`** (weekdays
       every 15 min, 09:00–19:45; the app decides what is due from the Config times, section 1d),
       `grc-wa-drafts` (every 10 min) and `grc-gmail-watch` (daily 06:23). It deletes the old
       `grc-digest` and `grc-wa-reminders` jobs (their endpoints now send nothing).
