@@ -542,7 +542,7 @@ class ProgressRow(_SheetRow):
 
 
 ConversationStep = Literal["blocked_reason", "extension_date", "done_proof", "review_file",
-                           "return_notes"]  # fmt: skip
+                           "return_notes", "confirm"]  # fmt: skip
 
 
 class Conversation(_SheetRow):

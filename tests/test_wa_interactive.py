@@ -194,7 +194,12 @@ def test_a_typed_70_percent_in_reply_to_a_card():
     task_id = add(ctx, "work", MONDAY + timedelta(days=3))
     handle_message(tap(f"card:{task_id}"), ctx)
     card_id = "btn-1"
-    handle_message(text("70%", context_id=card_id), ctx)
+    assert handle_message(text("70%", context_id=card_id), ctx) == "confirm_progress"
+    _, body, buttons = ctx.wa.buttons[-1]
+    assert body == f"Progress {task_id} → 70%\nBenar?"
+    assert [t for _, t in buttons] == ["Ya", "Ubah", "Batal"]
+    assert task(ctx, task_id).progress_value is None  # nothing written before Ya
+    assert handle_message(tap("cf:yes"), ctx) == "confirmed_progress"
     assert task(ctx, task_id).progress_value == 0.7
 
 
@@ -334,6 +339,7 @@ def test_undo_within_24_hours_and_not_after():
     task_id = add(ctx, "work", MONDAY + timedelta(days=3), Status="Not Started")
     handle_message(tap(f"prog:{task_id}:50"), ctx)
     handle_message(text("undo"), ctx)
+    handle_message(text("ya"), ctx)  # typed "ya" confirms too
     saved = task(ctx, task_id)
     assert (saved.progress_value, saved.status) == (None, "Not Started")
     assert "Undone" in ctx.wa.last_text(A)
@@ -341,6 +347,7 @@ def test_undo_within_24_hours_and_not_after():
     later = now() + timedelta(hours=25)
     with clock.freeze(later):
         handle_message(text("undo"), ctx, now=later)
+        handle_message(tap("cf:yes"), ctx, now=later)
     assert "Nothing of yours to undo" in ctx.wa.last_text(A)
     assert task(ctx, task_id).progress_value == 0.75
 
@@ -351,6 +358,7 @@ def test_approve_cannot_be_undone():
                   Doer="Staff P", Owner="Staff P", Reviewer="Staff A")  # fmt: skip
     handle_message(tap(f"apv:{task_id}"), ctx)
     handle_message(text(f"undo {task_id}"), ctx)
+    handle_message(tap("cf:yes"), ctx)
     assert "can't be undone" in ctx.wa.last_text(A)
     assert task(ctx, task_id).status == "Approved"
 
@@ -398,8 +406,15 @@ def test_blocked_and_extension_decision_by_email():
         if row[0] == "Allowed senders":
             row[1] = "@example.com"
     ctx.store.load()
-    run = process_inbox(gmail, services)
-    assert run.commands == 3
+    # One at a time, each confirmed with YES (section 22: typed changes wait for YES).
+    pending = {mid: gmail.messages.pop(mid) for mid in ("e1", "e2", "e3")}
+    for mid, sender in (("e1", "staff.a"), ("e2", "staff.a"), ("e3", "staff.k")):
+        gmail.messages[mid] = pending[mid]
+        process_inbox(gmail, services)
+        assert "Reply YES to confirm" in gmail.replies[-1][1].text
+        gmail.add(f"{mid}-yes", sender_email=f"{sender}@example.com", subject="Re: x",
+                  body_text="YES")  # fmt: skip
+        assert process_inbox(gmail, services).commands == 1
     saved = task(ctx, task_id)
     assert saved.status == "On Hold" and saved.due_date == date(2026, 11, 20)
     assert {r.channel for r in log(ctx)} == {"Email"}

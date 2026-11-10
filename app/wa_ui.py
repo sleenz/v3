@@ -130,7 +130,11 @@ def take_conversation(
 ) -> tuple[Conversation | None, Conversation | None]:
     """(open question, expired question) for the person; either is removed from the tab."""
     rows = _conversations(store)
-    mine = [r for r in rows if r.person.casefold() == person.casefold()]
+    mine = [
+        r
+        for r in rows
+        if r.person.casefold() == person.casefold() and r.pending_action != "confirm"
+    ]  # confirmations: app/replies.py
     if not mine:
         return None, None
     try:

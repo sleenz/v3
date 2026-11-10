@@ -17,6 +17,7 @@ CommandName = Literal[
     "approve", "return", "all", "recurring", "pause", "resume", "assign",
     # v1.4 part 2 (DESIGN section 22)
     "blocked", "extension", "extension_ok", "extension_no", "snooze", "undo",
+    "note",  # part C: information added to Notes
 ]  # fmt: skip
 
 _TASK_ID = re.compile(r"\bG-?(\d{1,5})\b", re.IGNORECASE)
@@ -44,6 +45,7 @@ _TASK_VERBS: dict[str, CommandName] = {
     "reject extension": "extension_no", "tolak perpanjangan": "extension_no",
     "snooze": "snooze", "tunda": "snooze", "ingatkan besok": "snooze", "besok aja": "snooze",
     "undo": "undo", "batalkan": "undo",
+    "note": "note", "catatan": "note",
 }  # fmt: skip
 _PERSON_VERBS: dict[str, CommandName] = {
     "pause": "pause", "jeda": "pause", "stop": "pause",

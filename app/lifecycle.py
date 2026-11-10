@@ -383,7 +383,8 @@ def _list_reply(title: str, tasks: list[Task]) -> str:
 
 
 CHANGES = frozenset({"progress", "review", "done", "approve", "return", "assign", "blocked",
-                     "extension", "extension_ok", "extension_no", "snooze", "undo"})  # fmt: skip
+                     "extension", "extension_ok", "extension_no", "snooze", "undo",
+                     "note"})  # fmt: skip
 
 
 def run_command(command: Command, ctx: CommandContext) -> CommandResult:
@@ -560,6 +561,14 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
 
     if command.name == "snooze":
         return _snooze(command, task, ctx, today)
+
+    if command.name == "note":
+        text = command.value.strip()
+        if not text:
+            return CommandResult(f"What should I note on {task.id}?", task.id)
+        stamp = f"Note {now:%d %b %Y} by {actor.name}: {text}"
+        _apply(ctx, task, "Note", {"Notes": f"{task.notes}\n{stamp}" if task.notes else stamp})
+        return CommandResult(f"Noted on {task.id}.", task.id, changed=True)
 
     if command.name == "progress":
         fraction = progress_fraction(command.value)
