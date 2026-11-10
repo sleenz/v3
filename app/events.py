@@ -25,9 +25,11 @@ def should_wait(store: SheetStore, now: datetime | None = None) -> bool:
     return not within_workday(now or clock.now(), store.config())
 
 
-def queue_event(store: SheetStore, kind: str, task_id: str, now: datetime | None = None) -> bool:
+def queue_event(
+    store: SheetStore, kind: str, task_id: str, note: str = "", now: datetime | None = None
+) -> bool:
     """Queue a notice for the next Workday start. False: could not queue (send it now)."""
-    row = QueuedEvent(queued_at=now or clock.now(), kind=kind, task_id=task_id)
+    row = QueuedEvent(queued_at=now or clock.now(), kind=kind, task_id=task_id, note=note)
     try:
         store.append_service(EVENT_QUEUE, [row])
     except SchemaError:
@@ -42,7 +44,7 @@ def queue_event(store: SheetStore, kind: str, task_id: str, now: datetime | None
     return True
 
 
-def flush_events(store: SheetStore, gmail: object, sheet_url: str) -> int:
+def flush_events(store: SheetStore, gmail: object, sheet_url: str, wa: object = None) -> int:
     """Send every queued notice (inside working hours); a failed one stays for the next run.
     Returns how many were sent."""
     from app.gmail import GmailAuthError
@@ -62,7 +64,16 @@ def flush_events(store: SheetStore, gmail: object, sheet_url: str) -> int:
         if task is None:
             continue  # the row was deleted: nothing to announce
         try:
-            notify(item.kind, task, store, gmail, sheet_url, queue_when_closed=False)  # type: ignore[arg-type]
+            notify(
+                item.kind,
+                task,
+                store,
+                gmail,
+                sheet_url,
+                queue_when_closed=False,  # type: ignore[arg-type]
+                note=item.note,
+                wa=wa,
+            )
             sent += 1
         except GmailAuthError:
             left.append(item)

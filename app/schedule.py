@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta
 
 from pydantic import BaseModel
 
-from app import clock, outbox
+from app import clock, outbox, progress
 from app.events import flush_events
 from app.gmail import GmailAuthError, GmailClient
 from app.models import (
@@ -208,7 +208,7 @@ def run_reminders(
         logger.info("reminders_run", extra={"n_slots": 0, "working_day": False})
         return run
     if within_workday(now, config):
-        run.events = flush_events(store, gmail, sheet_url)
+        run.events = flush_events(store, gmail, sheet_url, wa)
     slots = due_slots(now, config)
     stored = store.service_rows(REMINDERS_SENT, ReminderSent)
     rows = [r for r in stored if r.day >= today - timedelta(days=KEEP_DAYS) or r.sent_at is None]
@@ -259,6 +259,7 @@ def run_reminders(
             sent_today,
             messages_today,
             run,
+            progress.snoozed(store, today),
         )
     if MANAGER in todo:
         _manager_slot(store, rows, tasks_list, staff, config, today, now, sender, sent_today, run)
@@ -298,8 +299,10 @@ def _personal_slots(
     sent_today: set[tuple[str, str, str]],
     messages_today: dict[str, set[datetime]],
     run: RemindersRun,
+    snoozed: set[tuple[str, str]] = frozenset(),  # type: ignore[assignment]
 ) -> None:
-    """One message per person for the slot(s) due now, plus their deferred triggers."""
+    """One message per person for the slot(s) due now, plus their deferred triggers. A task the
+    person snoozed (`_snooze`) is left out until the snooze ends."""
     slot = personal[-1]  # several slots at once (a missed run): one message, the latest slot
     fresh: list[Trigger] = []
     for name in personal:
@@ -313,10 +316,11 @@ def _personal_slots(
             rows.remove(row)  # nothing left to remind about
             continue
         trigger = _current_rule(Trigger(row.rule, row.task_id, row.person), task, today)
-        by_person[row.person.casefold()].append(trigger)
         keep_deferred.append(row)
+        if (row.task_id, row.person.casefold()) not in snoozed:
+            by_person[row.person.casefold()].append(trigger)
     for trigger in fresh:
-        if trigger.key not in sent_today:
+        if trigger.key not in sent_today and (trigger.task_id, trigger.key[2]) not in snoozed:
             by_person[trigger.person.casefold()].append(trigger)
     for key, triggers in by_person.items():
         person = next((p for p in staff if p.name.casefold() == key), None)

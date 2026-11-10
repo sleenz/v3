@@ -66,7 +66,9 @@ def _state_row(task: Task, notified_doer: str, notified_at: datetime | None) -> 
     )
 
 
-def run_changes(store: SheetStore, gmail: GmailClient, sheet_url: str) -> ChangesRun:
+def run_changes(
+    store: SheetStore, gmail: GmailClient, sheet_url: str, wa: object = None
+) -> ChangesRun:
     """Email the doer of every open task whose current doer has not been emailed yet.
 
     That covers both triggers in section 7: approval (Proposed → open, nobody notified) and
@@ -95,7 +97,7 @@ def run_changes(store: SheetStore, gmail: GmailClient, sheet_url: str) -> Change
         notified_at = previous.notified_at if previous else None
         rows[task.id] = _state_row(task, notified_doer, notified_at)
         if previous is not None and previous.status != task.status:
-            _status_event(store, gmail, task, sheet_url)  # v1.4: a review step edited in Sheet
+            _status_event(store, gmail, task, sheet_url, wa)  # v1.4: a review step in Sheet
         doer = task.doer.strip()
         if task.status not in OPEN_STATUSES or not doer or doer == notified_doer:
             continue
@@ -129,6 +131,16 @@ def run_changes(store: SheetStore, gmail: GmailClient, sheet_url: str) -> Change
             outbox.record(store, "Email", sent.id, doer, [task.id], "assigned", sent.thread_id)
         rows[task.id] = _state_row(task, doer, sent_at)
         run.emailed += 1
+        if wa is not None:  # section 22: also on WhatsApp, with buttons
+            try:
+                from app.wa_ui import notify_whatsapp
+
+                notify_whatsapp("assigned", task, store, wa)
+            except Exception as error:
+                logger.error(
+                    "wa_notice_failed",
+                    extra={"task_id": task.id, "error_type": type(error).__name__},
+                )
         # Record each send at once, so a crash later in the run cannot cause a second email.
         store.write_state(list(rows.values()) + [s for i, s in state.items() if i not in rows])
         _audit(store, task.id, "Assignment emailed", "Doer", doer)
@@ -137,7 +149,9 @@ def run_changes(store: SheetStore, gmail: GmailClient, sheet_url: str) -> Change
     return run
 
 
-def _status_event(store: SheetStore, gmail: GmailClient, task: Task, sheet_url: str) -> None:
+def _status_event(
+    store: SheetStore, gmail: GmailClient, task: Task, sheet_url: str, wa: object = None
+) -> None:
     """In Review / Approved / Returned set in the Sheet: tell the reviewer or the doer."""
     from app.lifecycle import EVENT_STATUSES, notify
 
@@ -145,7 +159,7 @@ def _status_event(store: SheetStore, gmail: GmailClient, task: Task, sheet_url: 
     if event is None:
         return
     try:
-        notify(event, task, store, gmail, sheet_url)
+        notify(event, task, store, gmail, sheet_url, wa=wa)
     except GmailAuthError:
         raise
     except Exception as error:  # a notice must never stop the change job

@@ -89,6 +89,8 @@ HELP_TEXT = (
     "e.g. *PROMPT: this is the ATMR report*.\n"
     "• After logging I ask you to confirm the deadline: reply *YES* or the correct date.\n"
     "• *my tasks* – your open tasks. *help* – this message.\n"
+    "• Update a task: tap the buttons in a reminder (*Lihat tugas*), or send *G-0012 70*, "
+    "*blocked G-0012 <reason>*, *extend G-0012 20 Nov*, *snooze G-0012*, *undo*.\n"
     "Logged requests wait for the manager's approval before anyone is assigned."
 )
 NOT_REGISTERED_TEXT = (
@@ -156,7 +158,75 @@ class WhatsAppClient(Protocol):
         """A template; `payloads` fill its quick-reply buttons in order (returned on a tap)."""
         ...
 
+    def send_buttons(
+        self, to: str, body: str, buttons: Sequence[tuple[str, str]], footer: str = ""
+    ) -> str | None:
+        """Up to 3 reply buttons (id, title); a tap comes back as `interactive.button_reply`."""
+        ...
+
+    def send_list(
+        self,
+        to: str,
+        body: str,
+        button: str,
+        rows: Sequence[tuple[str, str, str]],
+        section: str = "",
+    ) -> str | None:
+        """One list of up to 10 rows (id, title, description); a choice comes back as
+        `interactive.list_reply`."""
+        ...
+
     def download_media(self, media_id: str) -> bytes: ...
+
+
+# Meta's limits (Cloud API, checked 10 Nov 2026): reply buttons max 3, id 256, title 20, body
+# 1024, footer 60; lists one button label 20, 10 rows in all, row id 200, title 24,
+# description 72, section title 24, body 4096.
+MAX_BUTTONS = 3
+MAX_LIST_ROWS = 10
+
+
+def _cut(text: str, limit: int) -> str:
+    text = " ".join(text.split()) if limit <= 72 else text.strip()
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def button_payload(body: str, buttons: Sequence[tuple[str, str]], footer: str = "") -> dict:
+    interactive: dict[str, Any] = {
+        "type": "button",
+        "body": {"text": _cut(body, 1024)},
+        "action": {
+            "buttons": [
+                {"type": "reply", "reply": {"id": key[:256], "title": _cut(title, 20)}}
+                for key, title in list(buttons)[:MAX_BUTTONS]
+            ]
+        },
+    }
+    if footer:
+        interactive["footer"] = {"text": _cut(footer, 60)}
+    return {"type": "interactive", "interactive": interactive}
+
+
+def list_payload(
+    body: str, button: str, rows: Sequence[tuple[str, str, str]], section: str = ""
+) -> dict:
+    items = []
+    for key, title, description in list(rows)[:MAX_LIST_ROWS]:
+        row = {"id": key[:200], "title": _cut(title, 24)}
+        if description:
+            row["description"] = _cut(description, 72)
+        items.append(row)
+    return {
+        "type": "interactive",
+        "interactive": {
+            "type": "list",
+            "body": {"text": _cut(body, 4096)},
+            "action": {
+                "button": _cut(button, 20),
+                "sections": [{"title": _cut(section or "Pilih", 24), "rows": items}],
+            },
+        },
+    }
 
 
 class GraphWhatsApp:
@@ -238,6 +308,21 @@ class GraphWhatsApp:
             },
         )
 
+    def send_buttons(
+        self, to: str, body: str, buttons: Sequence[tuple[str, str]], footer: str = ""
+    ) -> str | None:
+        return self._send(to, button_payload(body, buttons, footer))
+
+    def send_list(
+        self,
+        to: str,
+        body: str,
+        button: str,
+        rows: Sequence[tuple[str, str, str]],
+        section: str = "",
+    ) -> str | None:
+        return self._send(to, list_payload(body, button, rows, section))
+
     def download_media(self, media_id: str) -> bytes:
         info = json.loads(self._call(f"{GRAPH_URL}/{self._version}/{media_id}"))
         return self._call(str(info["url"]))
@@ -314,10 +399,13 @@ class WAMessage(BaseModel):
     id: str
     sender: str  # digits, as WhatsApp sends them
     received_at: datetime
-    kind: Literal["text", "media", "other"]
+    kind: Literal["text", "media", "tap", "other"]
     text: str = ""
     media: list[WAMedia] = Field(default_factory=list)
     context_id: str = ""  # v1.4: the bot message this one replies to (WhatsApp "reply")
+    # v1.4 part 2: a reply button, list row or template quick-reply tapped (id or payload)
+    tap: str = ""
+    forwarded: bool = False  # WhatsApp marks forwarded messages (context.forwarded)
 
 
 def signature_ok(app_secret: str, body: bytes, header: str | None) -> bool:
@@ -358,9 +446,19 @@ def parse_webhook(payload: dict[str, Any], phone_number_id: str) -> list[WAMessa
             for item in value.get("messages", []) or []:
                 kind = item.get("type")
                 text = ""
+                tap = ""
                 media: list[WAMedia] = []
                 if kind == "text":
                     text = str((item.get("text") or {}).get("body", ""))
+                elif kind == "button":  # a template quick-reply button (its payload)
+                    part = item.get("button") or {}
+                    tap = str(part.get("payload") or part.get("text") or "")
+                    text = str(part.get("text") or "")
+                elif kind == "interactive":  # a reply button or a list row
+                    part = item.get("interactive") or {}
+                    chosen = part.get("button_reply") or part.get("list_reply") or {}
+                    tap = str(chosen.get("id") or "")
+                    text = str(chosen.get("title") or "")
                 elif kind in ("document", "image"):
                     part = item.get(kind) or {}
                     text = str(part.get("caption", ""))
@@ -373,10 +471,18 @@ def parse_webhook(payload: dict[str, Any], phone_number_id: str) -> list[WAMessa
                         id=str(item.get("id", "")),
                         sender=wa_number(str(item.get("from", ""))),
                         received_at=_received(item.get("timestamp")),
-                        kind="text" if kind == "text" else "media" if media else "other",
+                        kind="text"
+                        if kind == "text"
+                        else "media"
+                        if media
+                        else "tap"
+                        if tap
+                        else "other",
                         text=text,
                         media=media,
                         context_id=str((item.get("context") or {}).get("id", "")),
+                        tap=tap,
+                        forwarded=bool((item.get("context") or {}).get("forwarded")),
                     )
                 )
     return messages
@@ -439,7 +545,10 @@ def _context_task(ctx: WaContext, message: WAMessage, implicit: bool) -> str | N
     rows = [r for r in ctx.store.wa_pending() if r.kind == "sent"]
     if message.context_id:
         replied = next((r for r in rows if r.key == message.context_id), None)
-        return (replied.task_id or None) if replied else None
+        if replied is not None:
+            return replied.task_id or None
+        sent = outbox.by_message(ctx.store, message.context_id)  # section 22: cards, notices
+        return sent.tasks[0] if sent is not None and len(sent.tasks) == 1 else None
     if not implicit:
         return None
     since = clock.now() - timedelta(hours=CONFIRM_HOURS)
@@ -484,6 +593,8 @@ def _handle_command(message: WAMessage, person: StaffMember, ctx: WaContext) -> 
             sheet_url=ctx.sheet_url,
             files=files,
             context_task_id=context,
+            message_id=message.id,
+            wa=ctx.wa,
         ),
     )
     reply = result.reply
@@ -574,6 +685,21 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
     if person is None:
         _reply(ctx, message.sender, NOT_REGISTERED_TEXT)
         return "not_registered"
+    from app import wa_ui  # section 22: buttons, lists and short questions
+
+    wa_ui.touch_window(store, person.name, now)
+    if message.kind == "tap":
+        if ctx.gmail is None:
+            _reply(ctx, message.sender, "Tombol belum bisa dipakai. Coba lagi nanti.")
+            return "tap_unavailable"
+        return wa_ui.handle_tap(message, person, ctx, now)
+    if message.kind in ("text", "media") and ctx.gmail is not None:
+        convo, gone = wa_ui.take_conversation(store, person.name, now)
+        if convo is not None:
+            files, _ = _download(ctx, message.media)
+            return wa_ui.handle_answer(message, person, ctx, convo, files)
+        if gone is not None:
+            wa_ui.expired(ctx, person, gone)  # then the message is handled as usual
     text = message.text.strip()
     if message.kind in ("text", "media"):
         handled = _handle_command(message, person, ctx)

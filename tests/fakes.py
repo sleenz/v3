@@ -429,6 +429,9 @@ class FakeWhatsApp:
         self.texts: list[tuple[str, str]] = []
         self.templates: list[tuple[str, str, str, list[str]]] = []
         self.payloads: list[list[str]] = []  # quick-reply payloads, one list per template
+        self.buttons: list[tuple[str, str, list[tuple[str, str]]]] = []  # (to, body, buttons)
+        self.lists: list[tuple[str, str, list[tuple[str, str, str]]]] = []  # (to, body, rows)
+        self.sent_count = 0
         self.media = media or {}
         self.fail_send = False
 
@@ -446,6 +449,20 @@ class FakeWhatsApp:
         self.templates.append((to, name, language, params))
         self.payloads.append(list(payloads))
         return f"tpl-{len(self.templates)}"
+
+    def send_buttons(self, to: str, body: str, buttons, footer: str = "") -> str | None:
+        if self.fail_send:
+            raise RuntimeError("send failed")
+        self.buttons.append((to, body, list(buttons)))
+        self.sent_count += 1
+        return f"btn-{self.sent_count}"
+
+    def send_list(self, to: str, body: str, button: str, rows, section: str = "") -> str | None:
+        if self.fail_send:
+            raise RuntimeError("send failed")
+        self.lists.append((to, body, list(rows)))
+        self.sent_count += 1
+        return f"list-{self.sent_count}"
 
     def download_media(self, media_id: str) -> bytes:
         if media_id not in self.media:
