@@ -34,9 +34,9 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, SecretStr
 
-from app import clock, outbox
+from app import clock, outbox, replies
 from app.chat import logged_text, person_tasks_text
-from app.commands import parse_command
+from app.commands import Command, parse_command, task_id_in
 from app.extract.prompt import assignee, parse_prompt
 from app.extract.rules import find_dates
 from app.gmail import GmailClient
@@ -89,6 +89,10 @@ HELP_TEXT = (
     "e.g. *PROMPT: this is the ATMR report*.\n"
     "• After logging I ask you to confirm the deadline: reply *YES* or the correct date.\n"
     "• *my tasks* – your open tasks. *help* – this message.\n"
+    "• Update a task: tap the buttons in a reminder (*Lihat tugas*), or just write it, e.g. "
+    "*udah 70%*, *G-0012 selesai* (with the file), *minta mundur ke 20 Nov*, *lagi stuck "
+    "nunggu data*, *besok aja ingetin*, *undo*. I show the change first: tap *Ya* to save, "
+    "*Ubah* or *Batal*.\n"
     "Logged requests wait for the manager's approval before anyone is assigned."
 )
 NOT_REGISTERED_TEXT = (
@@ -156,7 +160,75 @@ class WhatsAppClient(Protocol):
         """A template; `payloads` fill its quick-reply buttons in order (returned on a tap)."""
         ...
 
+    def send_buttons(
+        self, to: str, body: str, buttons: Sequence[tuple[str, str]], footer: str = ""
+    ) -> str | None:
+        """Up to 3 reply buttons (id, title); a tap comes back as `interactive.button_reply`."""
+        ...
+
+    def send_list(
+        self,
+        to: str,
+        body: str,
+        button: str,
+        rows: Sequence[tuple[str, str, str]],
+        section: str = "",
+    ) -> str | None:
+        """One list of up to 10 rows (id, title, description); a choice comes back as
+        `interactive.list_reply`."""
+        ...
+
     def download_media(self, media_id: str) -> bytes: ...
+
+
+# Meta's limits (Cloud API, checked 10 Nov 2026): reply buttons max 3, id 256, title 20, body
+# 1024, footer 60; lists one button label 20, 10 rows in all, row id 200, title 24,
+# description 72, section title 24, body 4096.
+MAX_BUTTONS = 3
+MAX_LIST_ROWS = 10
+
+
+def _cut(text: str, limit: int) -> str:
+    text = " ".join(text.split()) if limit <= 72 else text.strip()
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def button_payload(body: str, buttons: Sequence[tuple[str, str]], footer: str = "") -> dict:
+    interactive: dict[str, Any] = {
+        "type": "button",
+        "body": {"text": _cut(body, 1024)},
+        "action": {
+            "buttons": [
+                {"type": "reply", "reply": {"id": key[:256], "title": _cut(title, 20)}}
+                for key, title in list(buttons)[:MAX_BUTTONS]
+            ]
+        },
+    }
+    if footer:
+        interactive["footer"] = {"text": _cut(footer, 60)}
+    return {"type": "interactive", "interactive": interactive}
+
+
+def list_payload(
+    body: str, button: str, rows: Sequence[tuple[str, str, str]], section: str = ""
+) -> dict:
+    items = []
+    for key, title, description in list(rows)[:MAX_LIST_ROWS]:
+        row = {"id": key[:200], "title": _cut(title, 24)}
+        if description:
+            row["description"] = _cut(description, 72)
+        items.append(row)
+    return {
+        "type": "interactive",
+        "interactive": {
+            "type": "list",
+            "body": {"text": _cut(body, 4096)},
+            "action": {
+                "button": _cut(button, 20),
+                "sections": [{"title": _cut(section or "Pilih", 24), "rows": items}],
+            },
+        },
+    }
 
 
 class GraphWhatsApp:
@@ -238,6 +310,21 @@ class GraphWhatsApp:
             },
         )
 
+    def send_buttons(
+        self, to: str, body: str, buttons: Sequence[tuple[str, str]], footer: str = ""
+    ) -> str | None:
+        return self._send(to, button_payload(body, buttons, footer))
+
+    def send_list(
+        self,
+        to: str,
+        body: str,
+        button: str,
+        rows: Sequence[tuple[str, str, str]],
+        section: str = "",
+    ) -> str | None:
+        return self._send(to, list_payload(body, button, rows, section))
+
     def download_media(self, media_id: str) -> bytes:
         info = json.loads(self._call(f"{GRAPH_URL}/{self._version}/{media_id}"))
         return self._call(str(info["url"]))
@@ -314,10 +401,13 @@ class WAMessage(BaseModel):
     id: str
     sender: str  # digits, as WhatsApp sends them
     received_at: datetime
-    kind: Literal["text", "media", "other"]
+    kind: Literal["text", "media", "tap", "other"]
     text: str = ""
     media: list[WAMedia] = Field(default_factory=list)
     context_id: str = ""  # v1.4: the bot message this one replies to (WhatsApp "reply")
+    # v1.4 part 2: a reply button, list row or template quick-reply tapped (id or payload)
+    tap: str = ""
+    forwarded: bool = False  # WhatsApp marks forwarded messages (context.forwarded)
 
 
 def signature_ok(app_secret: str, body: bytes, header: str | None) -> bool:
@@ -358,9 +448,19 @@ def parse_webhook(payload: dict[str, Any], phone_number_id: str) -> list[WAMessa
             for item in value.get("messages", []) or []:
                 kind = item.get("type")
                 text = ""
+                tap = ""
                 media: list[WAMedia] = []
                 if kind == "text":
                     text = str((item.get("text") or {}).get("body", ""))
+                elif kind == "button":  # a template quick-reply button (its payload)
+                    part = item.get("button") or {}
+                    tap = str(part.get("payload") or part.get("text") or "")
+                    text = str(part.get("text") or "")
+                elif kind == "interactive":  # a reply button or a list row
+                    part = item.get("interactive") or {}
+                    chosen = part.get("button_reply") or part.get("list_reply") or {}
+                    tap = str(chosen.get("id") or "")
+                    text = str(chosen.get("title") or "")
                 elif kind in ("document", "image"):
                     part = item.get(kind) or {}
                     text = str(part.get("caption", ""))
@@ -373,10 +473,18 @@ def parse_webhook(payload: dict[str, Any], phone_number_id: str) -> list[WAMessa
                         id=str(item.get("id", "")),
                         sender=wa_number(str(item.get("from", ""))),
                         received_at=_received(item.get("timestamp")),
-                        kind="text" if kind == "text" else "media" if media else "other",
+                        kind="text"
+                        if kind == "text"
+                        else "media"
+                        if media
+                        else "tap"
+                        if tap
+                        else "other",
                         text=text,
                         media=media,
                         context_id=str((item.get("context") or {}).get("id", "")),
+                        tap=tap,
+                        forwarded=bool((item.get("context") or {}).get("forwarded")),
                     )
                 )
     return messages
@@ -439,7 +547,10 @@ def _context_task(ctx: WaContext, message: WAMessage, implicit: bool) -> str | N
     rows = [r for r in ctx.store.wa_pending() if r.kind == "sent"]
     if message.context_id:
         replied = next((r for r in rows if r.key == message.context_id), None)
-        return (replied.task_id or None) if replied else None
+        if replied is not None:
+            return replied.task_id or None
+        sent = outbox.by_message(ctx.store, message.context_id)  # section 22: cards, notices
+        return sent.tasks[0] if sent is not None and len(sent.tasks) == 1 else None
     if not implicit:
         return None
     since = clock.now() - timedelta(hours=CONFIRM_HOURS)
@@ -461,38 +572,6 @@ def _download(ctx: WaContext, media: list[WAMedia]) -> tuple[list[Attachment], l
             continue
         files.append(Attachment(filename=item.filename, mime=item.mime, data=data))
     return files, failed
-
-
-def _handle_command(message: WAMessage, person: StaffMember, ctx: WaContext) -> str | None:
-    """Run a task command (DESIGN section 19); None when the message is not one."""
-    text = message.text.strip()
-    explicit = _context_task(ctx, message, implicit=False) if message.context_id else None
-    command = parse_command(text, has_context=explicit is not None)
-    if command is None or ctx.gmail is None:
-        return None
-    context = explicit
-    if command.name == "assign" and command.task_id is None and context is None:
-        context = _context_task(ctx, message, implicit=True)  # "assign that to Cia" (A1)
-    files, failed = _download(ctx, message.media)
-    result = run_command(
-        command,
-        CommandContext(
-            store=ctx.store,
-            gmail=ctx.gmail,
-            actor=person,
-            channel="WhatsApp",
-            sheet_url=ctx.sheet_url,
-            files=files,
-            context_task_id=context,
-        ),
-    )
-    reply = result.reply
-    if failed:
-        reply += "\nI could not download: " + ", ".join(failed) + ". Please send it again."
-    if result.attachments:
-        reply += _email_files(ctx, person, result)
-    _reply(ctx, message.sender, reply, result.task_id or "")
-    return f"command_{command.name}"
 
 
 def _email_files(ctx: WaContext, person: StaffMember, result: CommandResult) -> str:
@@ -574,11 +653,31 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
     if person is None:
         _reply(ctx, message.sender, NOT_REGISTERED_TEXT)
         return "not_registered"
+    from app import wa_ui  # section 22: buttons, lists and short questions
+
+    wa_ui.touch_window(store, person.name, now)
+    if message.kind == "tap":
+        if ctx.gmail is None:
+            _reply(ctx, message.sender, "Tombol belum bisa dipakai. Coba lagi nanti.")
+            return "tap_unavailable"
+        if message.tap.startswith("cf:"):  # Ya / Ubah / Batal on a proposed change
+            return _confirm_answer(message.tap.removeprefix("cf:"), person, ctx, now)
+        return wa_ui.handle_tap(message, person, ctx, now)
+    if message.kind in ("text", "media") and ctx.gmail is not None:
+        if replies.pending_confirm(store, person.name, "WhatsApp", now) is not None:
+            typed = message.text.strip()
+            if replies.is_yes(typed) and not message.media:
+                return _confirm_answer("yes", person, ctx, now)
+            if replies.is_no(typed) and not message.media:
+                return _confirm_answer("no", person, ctx, now)
+            replies.drop_confirm(store, person.name)  # anything else replaces it ("Ubah")
+        convo, gone = wa_ui.take_conversation(store, person.name, now)
+        if convo is not None:
+            files, _ = _download(ctx, message.media)
+            return wa_ui.handle_answer(message, person, ctx, convo, files)
+        if gone is not None:
+            wa_ui.expired(ctx, person, gone)  # then the message is handled as usual
     text = message.text.strip()
-    if message.kind in ("text", "media"):
-        handled = _handle_command(message, person, ctx)
-        if handled is not None:
-            return handled
     if message.kind == "text":
         command = text.lower().strip(" .!?")
         if command in {"help", "/help", "menu"}:
@@ -596,7 +695,162 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
     if message.kind == "other":
         _reply(ctx, message.sender, UNSUPPORTED_TEXT)
         return "unsupported"
+    if message.kind in ("text", "media") and ctx.gmail is not None:
+        handled = _handle_reply(message, person, ctx, now)
+        if handled is not None:
+            return handled
     return _add_to_draft(message, ctx, now)
+
+
+# --- Typed replies (DESIGN section 22, part C) ---------------------------------------------------
+
+CONFIRM_BUTTONS = [("cf:yes", "Ya"), ("cf:edit", "Ubah"), ("cf:no", "Batal")]
+
+
+def _handle_reply(
+    message: WAMessage, person: StaffMember, ctx: WaContext, now: datetime
+) -> str | None:
+    """A typed update, question or command: AI first, rules as fallback, changes confirmed.
+    None: the message is intake (a forwarded message, a file not replying to anything, text
+    from someone with no open tasks, the AI's `request`, or nothing understood that was not a
+    reply to a bot message)."""
+    from app import wa_ui
+
+    store = ctx.store
+    text = message.text.strip()
+    if message.forwarded or not text:
+        return None
+    if _open_draft(store.wa_pending(), message.sender, now) is not None:
+        return None  # inside a request's 30-second window: it joins the draft
+    linked = _context_task(ctx, message, implicit=False) if message.context_id else None
+    replied_to_bot = bool(message.context_id) and (
+        linked is not None or outbox.by_message(store, message.context_id) is not None
+    )
+    if message.media and not (linked or replied_to_bot or task_id_in(text)):
+        return None  # a file with a caption, not about a task: a new request
+    all_tasks = [t for t in store.tasks() if t.id]
+    staff = store.staff()
+    mine = wa_ui.my_tasks(person, all_tasks, staff)
+    if not mine and not replied_to_bot and parse_command(text) is None:
+        return None
+    config = store.config()
+    understood = replies.understand(
+        text, person, mine, linked, ctx.services.ai, config.ai_provider != "Off",
+        config.mask_emails_for_ai, now.date(), has_files=bool(message.media),
+    )  # fmt: skip
+    command = understood.command
+    if understood.kind == "pick" and command is not None and command.name == "assign":
+        implicit = _context_task(ctx, message, implicit=True)  # "assign that to Cia" (A1)
+        if implicit:
+            command = Command("assign", implicit, command.value)
+            understood = replies.Understanding("change", command, implicit, understood.via)
+    kind = understood.kind
+    if kind == "request":
+        return None
+    if kind == "nothing":
+        if not replied_to_bot:
+            return None
+        _reply(ctx, message.sender, "Maaf, saya belum paham. " + REPLY_HELP, linked or "")
+        return "reply_not_understood"
+    if kind == "help":
+        _reply(ctx, message.sender, HELP_TEXT)
+        return "help"
+    if kind == "list":
+        wa_ui.send_task_list(ctx, person, mine, now.date(), "Tugas Anda (pilih satu):")
+        return "reply_list"
+    if kind == "pick":
+        wa_ui.send_task_list(ctx, person, mine, now.date(),
+                             "Tugas yang mana? Pilih, lalu kirim lagi.")  # fmt: skip
+        return "reply_pick"
+    if kind == "question":
+        task = next((t for t in all_tasks if t.id == understood.task_id), None)
+        _reply(
+            ctx, message.sender, replies.answer(task, staff, now.date()), task.id if task else ""
+        )
+        return "reply_question"
+    if kind == "ask":
+        task_id = understood.task_id or ""
+        if wa_ui.start_conversation(store, person.name, understood.step, task_id, now):  # type: ignore[arg-type]
+            _reply(ctx, message.sender, wa_ui.QUESTIONS[understood.step].format(task=task_id),
+                   task_id)  # fmt: skip
+            return f"reply_ask_{understood.step}"
+        return None
+    assert command is not None
+    if kind == "now" or not replies.needs_confirmation(command):
+        return _run_now(message, person, ctx, command)
+    task = next((t for t in all_tasks if t.id == command.task_id), None)
+    names = [m.filename for m in message.media]
+    pending = replies.Pending(
+        command.name, command.task_id, command.value, message.id,
+        [m.model_dump() for m in message.media],
+    )  # fmt: skip
+    if not replies.propose(store, person.name, "WhatsApp", pending, now):
+        _reply(ctx, message.sender, "Belum bisa menyimpan konfirmasi (tab _conversations "
+               "belum ada). Tidak ada yang diubah.")  # fmt: skip
+        return "reply_no_confirm_tab"
+    body = f"{replies.describe(command, task, names)}\nBenar?"
+    try:
+        message_id = ctx.wa.send_buttons(message.sender, body, CONFIRM_BUTTONS)
+        outbox.record(store, "WhatsApp", message_id, person.name, [command.task_id or ""],
+                      "confirm")  # fmt: skip
+    except Exception as error:
+        logger.error("wa_confirm_failed", extra={"error_type": type(error).__name__})
+    return f"confirm_{command.name}"
+
+
+def _run_now(message: WAMessage, person: StaffMember, ctx: WaContext, command: Command) -> str:
+    files, failed = _download(ctx, message.media)
+    result = run_command(
+        command,
+        CommandContext(store=ctx.store, gmail=ctx.gmail, actor=person, channel="WhatsApp",
+                       sheet_url=ctx.sheet_url, files=files, context_task_id=command.task_id,
+                       message_id=message.id, wa=ctx.wa),  # type: ignore[arg-type]
+    )  # fmt: skip
+    reply = result.reply
+    if failed:
+        reply += "\nI could not download: " + ", ".join(failed) + ". Please send it again."
+    if result.attachments:
+        reply += _email_files(ctx, person, result)
+    _reply(ctx, message.sender, reply, result.task_id or "")
+    return f"command_{command.name}"
+
+
+def _confirm_answer(answer: str, person: StaffMember, ctx: WaContext, now: datetime) -> str:
+    """Ya: apply the proposed change; Ubah: drop it and ask for the right one; Batal: drop it."""
+    store = ctx.store
+    convo = replies.pending_confirm(store, person.name, "WhatsApp", now)
+    if convo is None:
+        _reply(ctx, person.wa_id, "Tidak ada perubahan yang menunggu (sudah lewat 30 menit?).")
+        return "confirm_none"
+    replies.drop_confirm(store, person.name)
+    pending = replies.Pending.load(convo.value)
+    if answer == "no":
+        _reply(ctx, person.wa_id, "Dibatalkan. Tidak ada yang diubah.", pending.task_id or "")
+        return "confirm_cancelled"
+    if answer == "edit":
+        _reply(ctx, person.wa_id, "Ketik perubahan yang benar.", pending.task_id or "")
+        return "confirm_edit"
+    media = [WAMedia.model_validate(item) for item in pending.media]
+    files, failed = _download(ctx, media)
+    result = run_command(
+        pending.command(),
+        CommandContext(store=store, gmail=ctx.gmail, actor=person, channel="WhatsApp",  # type: ignore[arg-type]
+                       sheet_url=ctx.sheet_url, files=files, context_task_id=pending.task_id,
+                       message_id=pending.message_id, wa=ctx.wa),
+    )  # fmt: skip
+    reply = result.reply
+    if failed:
+        reply += "\nI could not download: " + ", ".join(failed) + ". Please send it again."
+    if result.attachments:
+        reply += _email_files(ctx, person, result)
+    _reply(ctx, person.wa_id, reply, result.task_id or "")
+    return f"confirmed_{pending.name}"
+
+
+REPLY_HELP = (
+    "Contoh: *70%*, *G-0012 selesai* (dengan file), *minta mundur ke 20 Nov*, "
+    "*lagi stuck nunggu data*, *besok aja ingetin*, atau ketuk *Lihat tugas*."
+)
 
 
 def _add_to_draft(message: WAMessage, ctx: WaContext, now: datetime) -> str:

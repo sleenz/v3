@@ -296,7 +296,13 @@ def test_a_command_reply_to_a_single_task_notice_needs_no_task_id():
               subject="Re: returned", body_text="progress 60")  # fmt: skip
     services = Services(store=store, drive=FakeDriveStore(), ai=NullProvider())
     with clock.freeze(at(MONDAY, 11, 30)):
-        run = process_inbox(gmail, services)
-    assert run.commands == 1
+        process_inbox(gmail, services)
+    assert "Reply YES to confirm" in gmail.replies[-1][1].text  # nothing written yet
+    store.load()
+    assert next(t for t in store.tasks() if t.id == task_id).progress_value != 0.6
+    gmail.add("r3", thread_id=thread, sender_email="staff.p@example.com",
+              subject="Re: returned", body_text="YES")  # fmt: skip
+    with clock.freeze(at(MONDAY, 11, 35)):
+        assert process_inbox(gmail, services).commands == 1
     store.load()
     assert next(t for t in store.tasks() if t.id == task_id).progress_value == 0.6

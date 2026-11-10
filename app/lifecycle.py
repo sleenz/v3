@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta
 from html import escape
 from typing import Any, Literal
 
-from app import clock, outbox, recurring
+from app import clock, outbox, progress, recurring
 from app.commands import Command, is_me, progress_fraction
 from app.events import queue_event, should_wait
 from app.gmail import GmailAuthError, GmailClient
@@ -59,6 +59,8 @@ class CommandContext:
     files: list[Attachment] = field(default_factory=list)  # sent with the command
     context_task_id: str | None = None  # the task of the message replied to
     now: datetime | None = None
+    message_id: str = ""  # the incoming message (dedupe and ProgressLog, section 22)
+    wa: Any = None  # WhatsAppClient: notices also go on WhatsApp (section 22)
 
 
 @dataclass
@@ -131,15 +133,23 @@ def _record_state(store: SheetStore, task: Task) -> None:
 
 
 def _apply(
-    ctx: CommandContext, task: Task, action: str, changes: dict[str, Any], event: str = ""
+    ctx: CommandContext,
+    task: Task,
+    action: str,
+    changes: dict[str, Any],
+    event: str = "",
+    note: str = "",
 ) -> Task:
     store = ctx.store
-    changes = {**changes, "Last updated": ctx.now or clock.now()}
+    now = ctx.now or clock.now()
+    changes = {**changes, "Last updated": now}
     store.update_task(task.id, changes)
     _audit(store, ctx, task.id, action, changes, task)
+    progress.log_changes(store, task, changes, ctx.actor.name, ctx.channel, ctx.message_id,
+                         f"{action}: {note}" if note else action, now)  # fmt: skip
     updated = Task.model_validate({**task.model_dump(by_alias=True), **changes})
     if event:
-        notify(event, updated, store, ctx.gmail, ctx.sheet_url, ctx.files)
+        notify(event, updated, store, ctx.gmail, ctx.sheet_url, ctx.files, note=note, wa=ctx.wa)
         _record_state(store, updated)
     return updated
 
@@ -201,13 +211,35 @@ def notify(
     sheet_url: str = "",
     files: list[Attachment] | None = None,
     queue_when_closed: bool = True,
+    note: str = "",
+    wa: Any = None,
 ) -> None:
-    """Email the people an event concerns. Paused people (Staff `Reminders paused`) get nothing.
+    """Tell the people an event concerns. Paused people (Staff `Reminders paused`) get nothing.
     Outside working hours the notice waits in `_event_queue` for the next Workday start
-    (DESIGN section 22); `/jobs/reminders` sends it then with `queue_when_closed=False`."""
-    if queue_when_closed and should_wait(store) and queue_event(store, event, task.id):
+    (DESIGN section 22); `/jobs/reminders` sends it then with `queue_when_closed=False`.
+    Email always goes for `assigned` and `in_review` (they carry the files); the other notices
+    go by WhatsApp instead of email to people whose channel is WhatsApp, when `wa` is given."""
+    if queue_when_closed and should_wait(store) and queue_event(store, event, task.id, note):
         return
     staff = store.staff()
+    if wa is not None:
+        try:
+            from app.wa_ui import notify_whatsapp
+
+            notify_whatsapp(event, task, store, wa, note)
+        except Exception as error:  # a WhatsApp problem never stops the email
+            kind = type(error).__name__
+            logger.error("wa_notice_failed", extra={"task_id": task.id, "error_type": kind})
+
+    def email_of(name: str) -> str:
+        if wa is not None and event not in ("assigned", "in_review"):
+            from app.reminders import channel_for
+
+            person = find_person(name, staff)
+            if person is not None and person.wa_id and channel_for(person) == "WhatsApp":
+                return ""  # told on WhatsApp
+        return _email_of(name, staff)
+
     due = f"{task.due_date:%a %d %b %Y}" if task.due_date else "not set"
     link = f"Sheet: {sheet_url}" if sheet_url else ""
     if event == "in_review":
@@ -244,13 +276,39 @@ def notify(
         _send(
             store,
             gmail,
-            _email_of(task.doer, staff),
+            email_of(task.doer),
             _subject(task, verdict),
             lines,
             person=task.doer,
             task_id=task.id,
             kind=event,
         )
+    elif event == "blocked":
+        lines = [f"{task.doer or 'The doer'} marked {task.id} as blocked: {task.title}",
+                 f"Reason: {note or '(none given)'}", f"Due: {due}", "", link]  # fmt: skip
+        people = [find_person(task.owner, staff), *managers(staff)]
+        for name in dict.fromkeys(p.name for p in people if p is not None):
+            _send(store, gmail, email_of(name), _subject(task, "blocked"), lines,
+                  person=name, task_id=task.id, kind=event)  # fmt: skip
+    elif event == "extension_requested":
+        lines = [
+            f"An extension is asked for {task.id}: {task.title}",
+            f"Due now: {due}. Asked for: {note.split('|')[0]}.",
+            "",
+            "Reply to this email with the first line:",
+            f"  approve extension {task.id}",
+            f"  reject extension {task.id}",
+            "",
+            link,
+        ]
+        for manager in managers(staff):
+            _send(store, gmail, email_of(manager.name), _subject(task, "extension asked"),
+                  lines, person=manager.name, task_id=task.id, kind=event)  # fmt: skip
+    elif event in ("extension_approved", "extension_rejected"):
+        verdict = "approved" if event == "extension_approved" else "rejected"
+        lines = [f"The extension for {task.id} was {verdict}: {task.title}", f"Due: {due}", link]
+        _send(store, gmail, email_of(task.doer), _subject(task, f"extension {verdict}"), lines,
+              person=task.doer, task_id=task.id, kind=event)  # fmt: skip
     elif event == "assigned":
         from app.jobs import send_assignment
 
@@ -324,9 +382,18 @@ def _list_reply(title: str, tasks: list[Task]) -> str:
 # --- Commands ---------------------------------------------------------------------------------
 
 
+CHANGES = frozenset({"progress", "review", "done", "approve", "return", "assign", "blocked",
+                     "extension", "extension_ok", "extension_no", "snooze", "undo",
+                     "note"})  # fmt: skip
+
+
 def run_command(command: Command, ctx: CommandContext) -> CommandResult:
     """Apply one command for `ctx.actor`; never raises for a user mistake. A sheet without a
-    column the command needs (e.g. `Review file`) gets a reply naming it, nothing else."""
+    column the command needs (e.g. `Review file`) gets a reply naming it, nothing else.
+    A message already applied (same message id in ProgressLog) changes nothing again."""
+    if command.name in CHANGES and progress.already_processed(ctx.store, ctx.message_id):
+        logger.info("command_duplicate", extra={"kind": command.name})
+        return CommandResult("Already done.", command.task_id)
     try:
         return _run(command, ctx)
     except SchemaError as error:
@@ -383,6 +450,9 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
             return CommandResult('Staff has no "Reminders paused" column yet. Nothing changed.')
         state = "paused" if paused else "resumed"
         return CommandResult(f"Reminders for {person.name} are {state}.", changed=True)
+
+    if command.name == "undo":
+        return _undo(command.task_id or ctx.context_task_id, ctx)
 
     task_id = command.task_id or ctx.context_task_id
     if task_id is None:
@@ -445,10 +515,60 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
     if command.name == "assign":
         return _assign(command, task, ctx, staff)
 
+    if command.name in ("extension_ok", "extension_no"):
+        return _decide_extension(command, task, ctx, today)
+
     if not _is_party(actor, task):
         return CommandResult(
             f"You are not the Owner or Doer of {task.id}. Nothing changed.", task.id
         )
+
+    if command.name == "blocked":
+        reason = command.value.strip()
+        if not reason:
+            return CommandResult(f"What is blocking it? blocked {task.id} <reason>.", task.id)
+        stamp = f"Blocked {now:%d %b %Y} by {actor.name}: {reason}"
+        notes = f"{task.notes}\n{stamp}" if task.notes else stamp
+        _apply(ctx, task, "Blocked", {"Status": "On Hold", "Notes": notes}, "blocked", reason)
+        return CommandResult(
+            f"{task.id} is On Hold: {reason}. The owner and the manager are told.",
+            task.id,
+            changed=True,
+        )
+
+    if command.name == "extension":
+        wanted = requested_date(command.value, today)
+        if wanted is None:
+            return CommandResult(
+                f"Which new date? e.g. extend {task.id} 20 Nov. Nothing changed.", task.id
+            )
+        floor = max(task.due_date or today, today)
+        if wanted <= floor:
+            return CommandResult(
+                f"{wanted:%d %b %Y} is not later than the due date. Nothing changed.", task.id
+            )
+        progress.log_note(ctx.store, task.id, actor.name, ctx.channel, ctx.message_id,
+                          progress.EXTENSION_FIELD, _day(task.due_date), wanted.isoformat(),
+                          "Extension requested", now)  # fmt: skip
+        asked = f"{wanted:%a %d %b %Y}|{wanted.isoformat()}|{actor.name}"
+        notify("extension_requested", task, store, ctx.gmail, ctx.sheet_url, note=asked, wa=ctx.wa)
+        return CommandResult(
+            f"Asked the manager to move {task.id} to {wanted:%a %d %b %Y}. "
+            "The due date changes only when the manager agrees.",
+            task.id,
+            changed=True,
+        )
+
+    if command.name == "snooze":
+        return _snooze(command, task, ctx, today)
+
+    if command.name == "note":
+        text = command.value.strip()
+        if not text:
+            return CommandResult(f"What should I note on {task.id}?", task.id)
+        stamp = f"Note {now:%d %b %Y} by {actor.name}: {text}"
+        _apply(ctx, task, "Note", {"Notes": f"{task.notes}\n{stamp}" if task.notes else stamp})
+        return CommandResult(f"Noted on {task.id}.", task.id, changed=True)
 
     if command.name == "progress":
         fraction = progress_fraction(command.value)
@@ -496,6 +616,117 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
         return CommandResult(f"{task.id} is Done. Thank you.", task.id, changed=True)
 
     return CommandResult("I didn't understand that command. Send help.")
+
+
+def _day(value: date | None) -> str:
+    return value.isoformat() if value else ""
+
+
+def requested_date(text: str, today: date) -> date | None:
+    """A date the person typed: "20 Nov", "20/11/2026", "2026-11-20", "this friday", "in 3 days"."""
+    from app.extract.prompt import deadline
+    from app.extract.rules import find_dates
+
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        pass
+    hits = find_dates(text, today)
+    if hits:
+        return hits[0].value
+    found, _ = deadline(f"deadline {text}", today)
+    return found
+
+
+def _decide_extension(
+    command: Command, task: Task, ctx: CommandContext, today: date
+) -> CommandResult:
+    """Manager only: the due date changes only on approval (DESIGN section 22)."""
+    if ctx.actor.role != "Manager":
+        return CommandResult("Only the manager can decide an extension. Nothing changed.", task.id)
+    asked = progress.last_extension(ctx.store, task.id)
+    wanted = requested_date(command.value, today) if command.value else None
+    if wanted is None and asked is not None:
+        wanted = progress.typed("Due date", asked.new_value)
+    if not isinstance(wanted, date):
+        return CommandResult(f"No extension was asked for {task.id}. Nothing changed.", task.id)
+    if command.name == "extension_ok":
+        _apply(ctx, task, "Extension approved", {"Due date": wanted}, "extension_approved",
+               f"{_day(task.due_date)} -> {wanted.isoformat()}")  # fmt: skip
+        return CommandResult(
+            f"{task.id} is now due {wanted:%a %d %b %Y}. {task.doer} is told.",
+            task.id,
+            changed=True,
+        )
+    progress.log_note(ctx.store, task.id, ctx.actor.name, ctx.channel, ctx.message_id,
+                      progress.EXTENSION_FIELD, wanted.isoformat(), _day(task.due_date),
+                      "Extension rejected", ctx.now)  # fmt: skip
+    notify("extension_rejected", task, ctx.store, ctx.gmail, ctx.sheet_url, wa=ctx.wa)
+    return CommandResult(
+        f"Extension for {task.id} rejected; still due {task.due_date:%a %d %b %Y}."
+        if task.due_date
+        else f"Extension for {task.id} rejected.",
+        task.id,
+        changed=True,
+    )
+
+
+def _snooze(command: Command, task: Task, ctx: CommandContext, today: date) -> CommandResult:
+    """No reminders about the task for this person until a date: at most 2 working days ahead,
+    never past the due date (DESIGN section 22)."""
+    from app.reminders import next_workday
+
+    holidays = ctx.store.config().holidays
+    latest = next_workday(next_workday(today, holidays), holidays)
+    until = requested_date(command.value, today) if command.value else None
+    until = until or next_workday(today, holidays)
+    note = ""
+    if until > latest:
+        until, note = latest, " (at most 2 working days)"
+    if task.due_date is not None and until > task.due_date:
+        until, note = task.due_date, " (not past the due date)"
+    if until <= today:
+        why = "overdue" if task.due_date and task.due_date < today else "due today"
+        return CommandResult(f"{task.id} is {why}; it can't be snoozed.", task.id)
+    progress.set_snooze(ctx.store, task.id, ctx.actor.name, until, ctx.now)
+    progress.log_note(ctx.store, task.id, ctx.actor.name, ctx.channel, ctx.message_id,
+                      progress.SNOOZE_FIELD, "", until.isoformat(), "Snoozed", ctx.now)  # fmt: skip
+    return CommandResult(
+        f"No reminders about {task.id} until {until:%a %d %b}{note}.", task.id, changed=True
+    )
+
+
+def _undo(task_id: str | None, ctx: CommandContext) -> CommandResult:
+    """Reverse the person's last change (on `task_id`, or their last on any task) within 24
+    hours. Notices already sent stay sent; approve and return are not undone (decision 9)."""
+    store = ctx.store
+    group = progress.last_change(store, ctx.actor.name, task_id, ctx.now)
+    if not group:
+        return CommandResult("Nothing of yours to undo in the last 24 hours.", task_id)
+    target = group[0].task_id
+    if not progress.undoable(group):
+        return CommandResult(f"Your last change on {target} can't be undone.", target)
+    task = next((t for t in store.tasks() if t.id == target), None)
+    if task is None:
+        return CommandResult(f"I can't find {target}. Nothing changed.", target)
+    changes: dict[str, Any] = {}
+    for row in group:
+        if row.field == progress.SNOOZE_FIELD:
+            progress.clear_snooze(store, target, ctx.actor.name)
+        elif row.field == progress.EXTENSION_FIELD:
+            continue  # a request: the manager simply does not approve it
+        else:
+            changes[row.field] = progress.typed(row.field, row.old_value)
+    if changes:
+        _apply(ctx, task, "Undo", changes)
+    else:
+        progress.log_note(store, target, ctx.actor.name, ctx.channel, ctx.message_id,
+                          group[0].field, group[0].new_value, "", "Undo", ctx.now)  # fmt: skip
+    fields = ", ".join(row.field for row in group)
+    return CommandResult(f"Undone on {target}: {fields}.", target, changed=True)
 
 
 def _assign(

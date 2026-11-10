@@ -430,31 +430,34 @@ def test_whatsapp_and_email_commands_give_the_same_result():
             media=list(media),
         )
 
-    assert handle_message(wa("w1", "progress G-0001 40"), ctx) == "command_progress"
+    def yes(i):
+        return WAMessage(id=i, sender=LEAD_WA, received_at=now, kind="tap", tap="cf:yes")
+
+    # Section 22: a typed change waits for Ya.
+    assert handle_message(wa("w1", "progress G-0001 40"), ctx) == "confirm_progress"
+    assert handle_message(yes("y1"), ctx) == "confirmed_progress"
     proof = WAMedia(id="m-proof", filename="Proof.pdf", mime="application/pdf")
-    assert handle_message(wa("w2", "done G-0001", [proof]), ctx) == "command_done"
-    # Email: the same two commands as replies in the task's thread (no ID needed there)
+    assert handle_message(wa("w2", "done G-0001", [proof]), ctx) == "confirm_done"
+    assert handle_message(yes("y2"), ctx) == "confirmed_done"
+    # Email: the same two commands as replies in the task's thread (no ID needed there),
+    # each confirmed with YES.
     store_b = store_with(task(source_id="t1"))
     gmail_b = FakeGmailClient()
     services = Services(store=store_b, drive=FakeDriveStore(), ai=NullProvider())
     subject = "Re: [GRC] G-0001 – Quarterly report (due 20 Nov 2026)"
-    gmail_b.add(
-        "e1",
-        subject=subject,
-        body_text="progress 40\n\n> quoted",
-        sender_email="lead@example.com",
-        thread_id="th",
-    )
-    gmail_b.add(
-        "e2",
-        subject=subject,
-        body_text="done",
-        sender_email="lead@example.com",
-        thread_id="th",
-        attachments=[PROOF],
-    )
-    result = process_inbox(gmail_b, services)
-    assert result.commands == 2 and gmail_b.labels("e1") == {COMMAND_LABEL}
+    steps = [
+        ("e1", "progress 40\n\n> quoted", []),
+        ("e1-yes", "YES", []),
+        ("e2", "done", [PROOF]),
+        ("e2-yes", "yes, thanks", []),
+    ]
+    commands = 0
+    for message_id, body, files in steps:
+        gmail_b.add(message_id, subject=subject, body_text=body,
+                    sender_email="lead@example.com", thread_id="th", attachments=files)  # fmt: skip
+        run = process_inbox(gmail_b, services)
+        commands += run.commands + run.replies  # once the bot replied, it is a bot thread
+    assert commands == 4 and gmail_b.labels("e1") == {COMMAND_LABEL}
     for store in (store_a, store_b):
         row = get(store, "G-0001")
         assert (row.status, row.progress_value, row.link) == (
@@ -476,6 +479,8 @@ def test_whatsapp_reply_context_gives_the_task():
         id="w1", sender=LEAD_WA, received_at=now, kind="text", text="progress G-0001 10"
     )
     handle_message(first, ctx)
+    yes = WAMessage(id="y1", sender=LEAD_WA, received_at=now, kind="tap", tap="cf:yes")
+    handle_message(yes, ctx)  # section 22: confirmed
     bot_message = [r for r in store.wa_pending() if r.kind == "sent"][-1]
     assert bot_message.task_id == "G-0001"
     reply = WAMessage(
@@ -486,7 +491,9 @@ def test_whatsapp_reply_context_gives_the_task():
         text="assign that to Ann",
         context_id=bot_message.key,
     )
-    assert handle_message(reply, ctx) == "command_assign"
+    assert handle_message(reply, ctx) == "confirm_assign"
+    yes2 = WAMessage(id="y2", sender=LEAD_WA, received_at=now, kind="tap", tap="cf:yes")
+    assert handle_message(yes2, ctx) == "confirmed_assign"
     assert get(store, "G-0001").doer == "Ann Intern"
 
 

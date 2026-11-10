@@ -15,6 +15,9 @@ from typing import Literal
 CommandName = Literal[
     "progress", "review", "done", "files", "mine", "today", "week",
     "approve", "return", "all", "recurring", "pause", "resume", "assign",
+    # v1.4 part 2 (DESIGN section 22)
+    "blocked", "extension", "extension_ok", "extension_no", "snooze", "undo",
+    "note",  # part C: information added to Notes
 ]  # fmt: skip
 
 _TASK_ID = re.compile(r"\bG-?(\d{1,5})\b", re.IGNORECASE)
@@ -33,6 +36,16 @@ _TASK_VERBS: dict[str, CommandName] = {
     "approve": "approve", "approved": "approve", "setuju": "approve", "setujui": "approve",
     "acc": "approve",
     "return": "return", "kembalikan": "return", "revisi": "return", "tolak": "return",
+    # v1.4 part 2 (two-word verbs are matched before one-word ones)
+    "blocked": "blocked", "block": "blocked", "stuck": "blocked", "terhambat": "blocked",
+    "hambatan": "blocked",
+    "extend": "extension", "extension": "extension", "perpanjang": "extension",
+    "perpanjangan": "extension", "mundur": "extension", "minta perpanjangan": "extension",
+    "approve extension": "extension_ok", "setuju perpanjangan": "extension_ok",
+    "reject extension": "extension_no", "tolak perpanjangan": "extension_no",
+    "snooze": "snooze", "tunda": "snooze", "ingatkan besok": "snooze", "besok aja": "snooze",
+    "undo": "undo", "batalkan": "undo",
+    "note": "note", "catatan": "note",
 }  # fmt: skip
 _PERSON_VERBS: dict[str, CommandName] = {
     "pause": "pause", "jeda": "pause", "stop": "pause",
@@ -44,6 +57,8 @@ _ASSIGN = re.compile(
     r"(?:to|ke|kepada)\s+(?P<name>.+?)\s*[.!]?$",
     re.IGNORECASE,
 )
+_ID_AND_NUMBER = re.compile(r"^(G-?\d{1,5})\s+(\d{1,3}(?:[.,]\d+)?)\s*%?$", re.IGNORECASE)
+_PERCENT = re.compile(r"^(\d{1,3}(?:[.,]\d+)?)\s*%$")
 _ME = frozenset({"me", "myself", "saya", "aku", "gue", "gw"})
 _MAX_CONTEXT_CHARS = 200  # a reply without a task ID is a command only if it is this short
 
@@ -85,6 +100,13 @@ def parse_command(text: str, has_context: bool = False) -> Command | None:
             return Command("assign", None, assign.group("name").strip())  # "which task?"
         return Command("assign", task_id_in(named) if named else None, assign.group("name").strip())
 
+    pair = _ID_AND_NUMBER.match(line.strip(" .!"))  # "G-0012 70" (v1.4 part 2)
+    if pair:
+        return Command("progress", task_id_in(pair.group(1)), pair.group(2).replace(",", "."))
+    percent = _PERCENT.match(line.strip(" .!"))  # "70%" in reply to a message about one task
+    if percent and has_context:
+        return Command("progress", None, percent.group(1).replace(",", "."))
+
     words = plain.split(" ")
     for size in (2, 1):  # two-word verbs first ("kirim review")
         verb = " ".join(words[:size])
@@ -98,6 +120,8 @@ def parse_command(text: str, has_context: bool = False) -> Command | None:
         found = task_id_in(rest_words[0]) if rest_words else None
         if found:
             rest = " ".join(rest_words[1:])
+        elif name == "undo" and not rest:
+            return Command("undo")  # the person's last change, on any task
         elif not has_context or len(line) > _MAX_CONTEXT_CHARS:
             return None
         if name == "progress":

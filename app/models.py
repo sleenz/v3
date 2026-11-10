@@ -519,6 +519,66 @@ class QueuedEvent(_SheetRow):
     _dates = field_validator("queued_at", mode="before")(_blank_to_none)
 
 
+class ProgressRow(_SheetRow):
+    """One `ProgressLog` row (DESIGN section 22): a field a person changed, from which channel
+    and message. `Note` starts with the action (e.g. `Blocked: waiting for data`); undo reads it."""
+
+    timestamp: datetime = Field(alias="Timestamp")
+    task_id: str = Field(alias="Task ID")
+    person: str = Field(default="", alias="Person")
+    channel: str = Field(default="", alias="Channel")
+    field: str = Field(default="", alias="Field")
+    old_value: str = Field(default="", alias="Old value")
+    new_value: str = Field(default="", alias="New value")
+    note: str = Field(default="", alias="Note")
+    message_id: str = Field(default="", alias="Message ID")
+
+    _dates = field_validator("timestamp", mode="before")(_blank_to_none)
+
+    @field_validator("old_value", "new_value", "note", "message_id", "person", mode="before")
+    @classmethod
+    def _text(cls, value: object) -> object:
+        return "" if value is None else str(value) if not isinstance(value, str) else value
+
+
+ConversationStep = Literal["blocked_reason", "extension_date", "done_proof", "review_file",
+                           "return_notes", "confirm"]  # fmt: skip
+
+
+class Conversation(_SheetRow):
+    """One `_conversations` row: a question the bot asked and waits 30 minutes for."""
+
+    person: str = Field(alias="Person")
+    channel: Channel = Field(alias="Channel")
+    pending_action: ConversationStep = Field(alias="Pending action")
+    task_id: str = Field(alias="Task ID")
+    value: str = Field(default="", alias="Value")
+    started_at: datetime = Field(alias="Started at")
+    expires_at: datetime = Field(alias="Expires at")
+
+    _dates = field_validator("started_at", "expires_at", mode="before")(_blank_to_none)
+
+
+class SnoozeRow(_SheetRow):
+    """One `_snooze` row: no reminders about the task for the person before `Until`."""
+
+    task_id: str = Field(alias="Task ID")
+    person: str = Field(alias="Person")
+    until: date = Field(alias="Until")
+    set_at: datetime | None = Field(default=None, alias="Set at")
+
+    _dates = field_validator("until", "set_at", mode="before")(_blank_to_none)
+
+
+class WaWindowRow(_SheetRow):
+    """One `_wa_window` row: when the person last wrote to the bot (Meta's 24-hour window)."""
+
+    person: str = Field(alias="Person")
+    last_inbound_at: datetime = Field(alias="Last inbound at")
+
+    _dates = field_validator("last_inbound_at", mode="before")(_blank_to_none)
+
+
 class AuditEntry(_SheetRow):
     timestamp: datetime = Field(alias="Timestamp")
     user: str = Field(alias="User")
@@ -715,10 +775,18 @@ def _columns(model: type[BaseModel]) -> tuple[str, ...]:
 OUTBOX = "_outbox"
 REMINDERS_SENT = "_reminders_sent"
 EVENT_QUEUE = "_event_queue"
+PROGRESS_LOG = "ProgressLog"  # visible (protected like AuditLog); the rest are hidden
+CONVERSATIONS = "_conversations"
+SNOOZE = "_snooze"
+WA_WINDOW = "_wa_window"
 SERVICE_TABS: dict[str, tuple[str, ...]] = {
     OUTBOX: _columns(OutboxRow),
     REMINDERS_SENT: _columns(ReminderSent),
     EVENT_QUEUE: _columns(QueuedEvent),
+    PROGRESS_LOG: _columns(ProgressRow),
+    CONVERSATIONS: _columns(Conversation),
+    SNOOZE: _columns(SnoozeRow),
+    WA_WINDOW: _columns(WaWindowRow),
 }
 
 WA_PENDING_COLUMNS: tuple[str, ...] = tuple(

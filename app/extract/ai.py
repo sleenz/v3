@@ -69,6 +69,10 @@ class AIProvider(Protocol):
         """Owner, reviewer and deadline from the sender's PROMPT line (DESIGN section 21)."""
         ...
 
+    def read_reply(self, prompt: str) -> Any:
+        """A typed reply read with `prompts/reply_v1.md` (section 22): a ReplyReading."""
+        ...
+
 
 def is_pdf(attachment: Attachment) -> bool:
     return attachment.mime == "application/pdf" or attachment.filename.lower().endswith(".pdf")
@@ -163,6 +167,9 @@ class NullProvider:
         return None
 
     def read_prompt(self, prompt_text: str, today: date) -> PromptReading | None:
+        return None
+
+    def read_reply(self, prompt: str) -> Any:
         return None
 
 
@@ -280,6 +287,27 @@ class GeminiProvider:
         if not text:
             return None
         return PromptReading.model_validate_json(text)
+
+    def read_reply(self, prompt: str) -> Any:
+        """A typed reply (section 22): only the masked message, the person's open tasks and
+        today's date go in; strict JSON comes back."""
+        from app.extract.reply import REPLY_SCHEMA, ReplyReading
+
+        interaction = self._get_client().interactions.create(
+            model=self.model,
+            input=prompt,
+            response_format={
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": REPLY_SCHEMA,
+            },
+            generation_config={"temperature": 0},
+            store=False,
+        )
+        text = getattr(interaction, "output_text", None)
+        if not text:
+            return None
+        return ReplyReading.model_validate_json(text)
 
 
 # --- Reading the sender's PROMPT line (DESIGN section 21) --------------------------------------

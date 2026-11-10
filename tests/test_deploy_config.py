@@ -219,8 +219,9 @@ def test_whatsapp_templates_match_what_the_code_sends():
         TEMPLATE_MANAGER,
         TEMPLATE_MORNING,
     )
+    from app.wa_ui import TEMPLATE_UPDATE
 
-    params = {TEMPLATE_MORNING: 3, TEMPLATE_DUE: 3, TEMPLATE_MANAGER: 5}
+    params = {TEMPLATE_MORNING: 3, TEMPLATE_DUE: 3, TEMPLATE_MANAGER: 5, TEMPLATE_UPDATE: 2}
     for name, count in params.items():
         spec = json.loads((ROOT / "whatsapp_templates" / f"{name}.json").read_text("utf-8"))
         assert spec["name"] == name and spec["language"] == TEMPLATE_LANGUAGE

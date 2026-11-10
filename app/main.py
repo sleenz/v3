@@ -368,7 +368,7 @@ def gmail_watch_job(runtime: RuntimeDep) -> dict[str, object] | JSONResponse:
 def changes_job(runtime: RuntimeDep) -> dict[str, object] | JSONResponse:
     try:
         runtime.store.load()
-        run = run_changes(runtime.store, runtime.gmail, runtime.settings.sheet_url)
+        run = run_changes(runtime.store, runtime.gmail, runtime.settings.sheet_url, runtime.wa)
     except (SchemaError, GmailAuthError) as error:
         return _job_error("changes", error, runtime)
     return {"job": "changes", **run.model_dump()}

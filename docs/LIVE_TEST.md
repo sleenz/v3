@@ -98,3 +98,36 @@ runs the job at once; it still only sends what is due at that time.
 | M5 | Reply to the M2 email with "ok noted". | Labelled `GRC/Reply`, no new task; the bot answers with how to update. |
 | M6 | After 19:00 (or at a weekend), approve a `Proposed` test task. | No assignment email yet; the next working day after 10:00 it arrives. Send `review G-…` on a test task at night: the reviewer's email arrives after 10:00 the next working day (`_event_queue` empties). |
 | M7 | WhatsApp only (templates approved): fill your `WhatsApp opt-in`, force run after 10:00 with a due task. | The `grc_pagi` template with a **Lihat tugas** button (tapping it does nothing until part B). |
+
+
+## WhatsApp buttons and updates (DESIGN section 22, part B)
+
+Needs WhatsApp live, the four templates approved, `installServiceTabs()` run again, and your
+Staff row with `WhatsApp` and `WhatsApp opt-in`. Use a test task where you are the Doer.
+
+| # | Do this | Expected |
+|---|---------|----------|
+| N1 | Tap **Lihat tugas** in the morning template (or send `hi` and use `view` from a card). | One card per open task (at most 5, earliest due first), each "G-… – title, due …, progress …%, status" with Update progres / Selesai (or Kirim review) / Lainnya. |
+| N2 | Update progres → 50%. | Progress 50 %, Status In Progress; one ProgressLog row per field with Channel WhatsApp and the message id. |
+| N3 | Lainnya → Terhambat → type a reason. | Status On Hold, the reason in Notes; the Owner and the manager are told. |
+| N4 | Lainnya → Minta perpanjangan → type `20 Nov`. As the manager, tap **Setuju**. | Due date changes only after Setuju; ProgressLog has "Extension requested" and "Extension approved". Repeat with **Tolak**: due date unchanged. |
+| N5 | Lainnya → Ingatkan besok. Force run `grc-reminders`. | Reply "No reminders about G-… until <next working day>"; no reminder about that task for you today. |
+| N6 | Send `undo`. | The last change (e.g. the snooze or the progress) is reversed; a second `undo` after 24 h says there is nothing to undo. |
+| N7 | Selesai → send the proof PDF. | Status Done, Link names the PDF, Submitted date today. |
+| N8 | Tap Terhambat, wait 31 minutes, then type something. | "Waktu menjawab … sudah habis"; nothing changed. |
+| N9 | Email: reply to any bot email with `blocked G-… waiting for data`. | Same result as N3, ProgressLog Channel Email. |
+
+
+## Typed replies read by Gemini (DESIGN section 22, part C)
+
+Config `AI provider` = `Gemini API key`. Use a test task you own (O1–O6 on WhatsApp, O7 by email).
+
+| # | Do this | Expected |
+|---|---------|----------|
+| O1 | Reply to a task card: "udah 70% tinggal nunggu data finance". | "Progress G-… → 70% Benar?" with Ya / Ubah / Batal. Nothing changes until **Ya**; then Progress 70 %. Log line `ai_reply_call` with `prompt_version` reply_v1, a confidence and `fallback` false (no text). |
+| O2 | "minta mundur ke 20 Nov", then **Batal**. | Nothing changes; no ProgressLog row. |
+| O3 | "kapan deadline G-…?" | The due date, status and progress straight from the sheet; no buttons. |
+| O4 | With two open tasks: "udah setengah jalan" (not a reply to anything). | A list "Tugas yang mana?" of your tasks. |
+| O5 | Paste a new request text (not a reply, not forwarded). | Logged as a new request 30 s later (Gemini said `request`). |
+| O6 | Set `AI provider` to `Off`; send `G-… 40`. | Still "Progress G-… → 40% Benar?" (the rules took over). Set it back. |
+| O7 | Reply to a reminder email: "still stuck, waiting for finance". Then reply `YES`. | First an email "Reply YES to confirm … terhambat (On Hold)"; after YES, Status On Hold. |

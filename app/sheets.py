@@ -46,11 +46,11 @@ LOADED_TABS = ("Master", "Staff", "Catalog", "LetterCodes", "Config", "_state", 
 
 DATE_COLUMNS = frozenset(
     {"Start / received", "Due date", "Submitted date", "Internship end date", "First due date",
-     "Date"}
+     "Date", "Until"}
 )  # fmt: skip
 DATETIME_COLUMNS = frozenset(
     {"Last updated", "Notified at", "Timestamp", "Last at", "Created at", "Updated at",
-     "Sent at", "Queued at"}
+     "Sent at", "Queued at", "Started at", "Expires at", "Set at", "Last inbound at"}
 )  # fmt: skip
 WA_PENDING = "_wa_pending"
 RECURRING = "Recurring"

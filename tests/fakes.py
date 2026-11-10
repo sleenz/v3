@@ -239,7 +239,10 @@ class FakeAIProvider:
         delay: float = 0.0,
         assignee: str | None = None,
         reading: dict[str, Any] | None = None,
+        reply: dict[str, Any] | Exception | str | None = None,
     ):
+        self.reply = reply  # read_reply: a ReplyReading dict, an exception, or raw text
+        self.reply_calls: list[str] = []
         from app.extract.ai import PromptReading
 
         self.reading: PromptReading | None = None
@@ -281,6 +284,20 @@ class FakeAIProvider:
         if self.error is not None:
             raise self.error
         return self.reading
+
+    def read_reply(self, prompt: str):
+        import time
+
+        from app.extract.reply import ReplyReading
+
+        self.reply_calls.append(prompt)
+        if self.delay:
+            time.sleep(self.delay)
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        if isinstance(self.reply, str):  # raw text: invalid JSON from the model
+            return ReplyReading.model_validate_json(self.reply)
+        return None if self.reply is None else ReplyReading.model_validate(self.reply)
 
 
 class FakeGmailClient:
@@ -429,6 +446,9 @@ class FakeWhatsApp:
         self.texts: list[tuple[str, str]] = []
         self.templates: list[tuple[str, str, str, list[str]]] = []
         self.payloads: list[list[str]] = []  # quick-reply payloads, one list per template
+        self.buttons: list[tuple[str, str, list[tuple[str, str]]]] = []  # (to, body, buttons)
+        self.lists: list[tuple[str, str, list[tuple[str, str, str]]]] = []  # (to, body, rows)
+        self.sent_count = 0
         self.media = media or {}
         self.fail_send = False
 
@@ -446,6 +466,20 @@ class FakeWhatsApp:
         self.templates.append((to, name, language, params))
         self.payloads.append(list(payloads))
         return f"tpl-{len(self.templates)}"
+
+    def send_buttons(self, to: str, body: str, buttons, footer: str = "") -> str | None:
+        if self.fail_send:
+            raise RuntimeError("send failed")
+        self.buttons.append((to, body, list(buttons)))
+        self.sent_count += 1
+        return f"btn-{self.sent_count}"
+
+    def send_list(self, to: str, body: str, button: str, rows, section: str = "") -> str | None:
+        if self.fail_send:
+            raise RuntimeError("send failed")
+        self.lists.append((to, body, list(rows)))
+        self.sent_count += 1
+        return f"list-{self.sent_count}"
 
     def download_media(self, media_id: str) -> bytes:
         if media_id not in self.media:
