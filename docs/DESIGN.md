@@ -879,7 +879,25 @@ review, mark done and ask for an extension; reviewer or Manager approve or retur
 approves extensions; delegation stays as section 19 (decision 3). Unknown senders are refused;
 incoming messages are deduped by message id.
 
-**Part C (approved, to build).** Typed text (WhatsApp and email replies) goes to the LLM first
+**Part C (built 10 Nov 2026; `app/extract/reply.py`, `app/replies.py`).** As built:
+- WhatsApp, after confirmations, open questions, `help`, PROMPT, the deadline YES and an open
+  30-second draft: typed text (and a file whose caption names a task or that replies to a bot
+  message) from someone with open tasks, or replying to a bot message, goes to
+  `replies.understand`. The AI's `request`, a forwarded message, a file not about a task and
+  text from someone with no open tasks are intake. With the AI off or unsure and the rules
+  finding nothing, plain text stays intake unless it replied to a bot message (then: "not
+  understood" with examples).
+- Email: replies in a thread the bot started (`_outbox`) go to `replies.understand`; other
+  first-line commands (section 19) still parse by rule. A YES / NO (`yes, thanks` counts; a
+  line with "but" does not) to a pending change is checked first; anything else drops it.
+- A pending change is a `_conversations` row (step `confirm`, Value = JSON: command, task,
+  value, original message id, WhatsApp media ids or the email id for attachments, fetched again
+  on Ya). One per person; a new typed change replaces it. Reads (task lists, files, questions)
+  run at once; changes in `lifecycle.CHANGES` always wait. A missing reason, date or proof
+  starts the matching question instead. New command `note G-0012 <text>` (intent `note`).
+- The AI's reply wording is never sent as fact: questions are answered from the Sheet, and the
+  change shown for confirmation is built by code (`replies.describe`).
+Specified: Typed text (WhatsApp and email replies) goes to the LLM first
 (`prompts/reply_v1.md`, versioned, at least 10 Indonesian/English examples) with the masked
 text, the person's role, their open tasks (ID, title, due date, status, progress, needs review),
 the task already linked by context or thread, and today's date. Output, validated with pydantic:

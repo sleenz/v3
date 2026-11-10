@@ -116,3 +116,18 @@ Staff row with `WhatsApp` and `WhatsApp opt-in`. Use a test task where you are t
 | N7 | Selesai → send the proof PDF. | Status Done, Link names the PDF, Submitted date today. |
 | N8 | Tap Terhambat, wait 31 minutes, then type something. | "Waktu menjawab … sudah habis"; nothing changed. |
 | N9 | Email: reply to any bot email with `blocked G-… waiting for data`. | Same result as N3, ProgressLog Channel Email. |
+
+
+## Typed replies read by Gemini (DESIGN section 22, part C)
+
+Config `AI provider` = `Gemini API key`. Use a test task you own (O1–O6 on WhatsApp, O7 by email).
+
+| # | Do this | Expected |
+|---|---------|----------|
+| O1 | Reply to a task card: "udah 70% tinggal nunggu data finance". | "Progress G-… → 70% Benar?" with Ya / Ubah / Batal. Nothing changes until **Ya**; then Progress 70 %. Log line `ai_reply_call` with `prompt_version` reply_v1, a confidence and `fallback` false (no text). |
+| O2 | "minta mundur ke 20 Nov", then **Batal**. | Nothing changes; no ProgressLog row. |
+| O3 | "kapan deadline G-…?" | The due date, status and progress straight from the sheet; no buttons. |
+| O4 | With two open tasks: "udah setengah jalan" (not a reply to anything). | A list "Tugas yang mana?" of your tasks. |
+| O5 | Paste a new request text (not a reply, not forwarded). | Logged as a new request 30 s later (Gemini said `request`). |
+| O6 | Set `AI provider` to `Off`; send `G-… 40`. | Still "Progress G-… → 40% Benar?" (the rules took over). Set it back. |
+| O7 | Reply to a reminder email: "still stuck, waiting for finance". Then reply `YES`. | First an email "Reply YES to confirm … terhambat (On Hold)"; after YES, Status On Hold. |

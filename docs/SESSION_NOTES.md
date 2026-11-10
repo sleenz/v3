@@ -92,8 +92,10 @@ recommended). Built in three PRs, one at a time on the same branch:
 - **B (built):** WhatsApp buttons and lists (`app/wa_ui.py`), `_conversations`, `_wa_window`,
   ProgressLog, blocked, extension, snooze, undo (`app/progress.py`), the same as typed or email
   commands. Plain typed WhatsApp text stays intake until C.
-- **C (after B):** typed replies read by Gemini first (`prompts/reply_v1.md`), the rules as
-  fallback, confirmation before any typed change.
+- **C (built):** typed replies read by Gemini first (`prompts/reply_v1.md`,
+  `app/extract/reply.py`, `app/replies.py`), the rules as fallback, confirmation before any
+  typed change (WhatsApp Ya/Ubah/Batal, email YES). Typed section 19 commands now also wait
+  for confirmation (decision 2).
 
 WhatsApp is not live yet: `WA_ACCESS_TOKEN` and `WA_APP_SECRET` have no value saved.
 

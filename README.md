@@ -266,9 +266,16 @@ Replaces the 09:00 digest and the old daily WhatsApp reminder.
         (25–100 %), **Selesai** or **Kirim review**, **Lainnya** (Selesai, Terhambat, Minta
         perpanjangan, Ingatkan besok, Lihat file). Reviewers get **Approve / Return**; the
         manager **Setuju / Tolak** for extensions. A question waits 30 minutes; `batal` cancels.
-      - Typed (WhatsApp or the first line of an email reply): `G-0012 70`, `70%` (in reply to a
-        message about one task), `blocked G-0012 <reason>`, `extend G-0012 20 Nov`, manager:
-        `approve extension G-0012` / `reject extension G-0012`, `snooze G-0012`, `undo`.
+      - Typed, in their own words (WhatsApp, or a reply to a bot email): "udah 70% tinggal nunggu
+        data finance", "G-0012 done, file terlampir", "minta mundur ke 20 Nov", "lagi stuck
+        nunggu tanda tangan", "besok aja ingetin", "kapan deadline G-0012?". Gemini reads it
+        (AI provider on); the fixed commands still work and take over when Gemini is off or
+        unsure: `G-0012 70`, `70%`, `blocked G-0012 <reason>`, `extend G-0012 20 Nov`,
+        `approve extension G-0012` / `reject extension G-0012` (manager), `snooze G-0012`,
+        `note G-0012 <text>`, `undo`.
+      - **Every typed change is shown first and saved only on confirmation**: WhatsApp **Ya** /
+        **Ubah** / **Batal**; email "Reply YES to confirm". Questions are answered at once; button
+        taps save at once.
 
 ### 2. Google Cloud project and APIs
 - [ ] Done by `deploy/setup_gcp.sh` (APIs, Artifact Registry `cloud-run-source-deploy`, Cloud Tasks
