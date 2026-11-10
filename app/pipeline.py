@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
 from app import clock
 from app.drive import DriveStore, folder_name
 from app.extract import prompt as sender_prompt
 from app.extract import rules
-from app.extract.ai import PDFS_SKIPPED_FLAG, AIProvider, pdf_documents, run_ai
+from app.extract.ai import PDFS_SKIPPED_FLAG, AIProvider, pdf_documents, read_assignee, run_ai
 from app.extract.clean import (
     Unwrapped,
     clean_text,
@@ -26,8 +26,14 @@ from app.extract.clean import (
     strip_noise,
     unwrap_forward,
 )
-from app.models import AuditEntry, Contact, RawRequest, Task, TaskResult
-from app.route import match_staff_name, route, sender_assignment
+from app.models import AuditEntry, Contact, RawRequest, StaffMember, Task, TaskResult
+from app.route import (
+    fuzzy_staff_name,
+    match_staff_name,
+    route,
+    sender_assignment,
+    staff_mentioned,
+)
 from app.sheets import SheetStore
 
 logger = logging.getLogger("grc.pipeline")
@@ -90,6 +96,61 @@ def _files_note(raw: RawRequest) -> str:
 
 
 PROMPT_NOT_STAFF_FLAG = "PROMPT ignored: sender is not in Staff"
+
+
+@dataclass
+class OwnerChoice:
+    """Who the sender's PROMPT names as owner (a Staff full name, or None) and how it was read."""
+
+    name: str | None = None
+    flags: list[str] = field(default_factory=list)
+
+
+def staff_match(name: str, staff: list[StaffMember]) -> tuple[StaffMember | None, bool]:
+    """(person, typo corrected): exact Staff match first, then a close spelling."""
+    person = match_staff_name(name, staff)
+    if person is not None:
+        return person, False
+    person = fuzzy_staff_name(name, staff)
+    return person, person is not None
+
+
+def choose_sender_owner(
+    prompt: str,
+    asked: sender_prompt.PromptOverrides,
+    staff: list[StaffMember],
+    ai: AIProvider,
+    ai_prompt: str = "",
+) -> OwnerChoice:
+    """The owner the sender's PROMPT names (DESIGN section 21), in this order:
+    1. the name the rules read ("assign to X", "ask X to", "assign X to"), matched to Staff,
+       allowing a small typo;
+    2. a Staff member named anywhere in the PROMPT after an assign word ("assign … enzo");
+    3. the AI reads the name from the PROMPT line only (never the request or a PDF); the name
+       must be in the line and must match Staff like any typed name.
+    The manager still approves. A name that cannot be read is flagged, never guessed."""
+    if not asked.assign_to and not sender_prompt.wants_assignment(prompt):
+        return OwnerChoice()
+    if asked.assign_to:
+        person, corrected = staff_match(asked.assign_to, staff)
+        if person is not None:
+            note = [f'PROMPT: "{asked.assign_to}" read as {person.name}'] if corrected else []
+            return OwnerChoice(person.name, note)
+    reviewer = staff_match(asked.reviewer, staff)[0] if asked.reviewer else None
+    named = [
+        p for p in staff_mentioned(sender_prompt.without_reviewer(prompt), staff) if p != reviewer
+    ]
+    if len(named) == 1:
+        return OwnerChoice(named[0].name)
+    read = read_assignee(ai, ai_prompt or prompt)
+    if read:
+        person, _ = staff_match(read, staff)
+        if person is not None:
+            return OwnerChoice(person.name, [f"PROMPT: owner read by AI as {person.name} - check"])
+    typed = asked.assign_to or read
+    if typed:
+        return OwnerChoice(None, [f'PROMPT: "{typed}" not found in Staff'])
+    return OwnerChoice(None, ["PROMPT: couldn't read who to assign"])
 
 
 def _is_staff(store: SheetStore, email: str) -> bool:
@@ -258,19 +319,26 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
         ai_catalog_id=ai_catalog_id,
         known_catalog_id=raw.catalog_id,
     )
-    assign_to = raw.assign_to or asked.assign_to
+    staff = store.staff()
+    if note:
+        masked_prompt = mask_text(note, mask_emails=config.mask_emails_for_ai)
+        choice = choose_sender_owner(note, asked, staff, services.ai, masked_prompt)
+        flags.extend(choice.flags)
+        assign_to = choice.name
+    else:
+        assign_to = raw.assign_to
     if assign_to:
-        routed = sender_assignment(
-            routed, assign_to, store.staff(), today, due_date, channel=raw.source
-        )
+        routed = sender_assignment(routed, assign_to, staff, today, due_date, channel=raw.source)
     flags.extend(routed.flags)
     reviewer = ""
     if asked.reviewer:
-        person = match_staff_name(asked.reviewer, store.staff())
+        person, corrected = staff_match(asked.reviewer, staff)
         if person is None:
             flags.append(f'PROMPT: reviewer "{asked.reviewer}" not found in Staff')
         else:
             reviewer = person.name
+            if corrected:
+                flags.append(f'PROMPT: reviewer "{asked.reviewer}" read as {person.name}')
             if reviewer == (routed.doer or routed.owner):
                 flags.append("PROMPT: the reviewer is also the Doer")
 

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.models import DEFAULT_AI_MODEL, AIResult, Attachment, CatalogEntry
 
@@ -63,6 +63,10 @@ class AIProvider(Protocol):
         attachment_names: list[str],
         documents: Sequence[Attachment] = (),
     ) -> AIResult | None: ...
+
+    def read_assignee(self, prompt_text: str) -> str | None:
+        """The name of the person the sender's PROMPT line asks to do the work, as written."""
+        ...
 
 
 def is_pdf(attachment: Attachment) -> bool:
@@ -155,6 +159,9 @@ class NullProvider:
         attachment_names: list[str],
         documents: Sequence[Attachment] = (),
     ) -> AIResult | None:
+        return None
+
+    def read_assignee(self, prompt_text: str) -> str | None:
         return None
 
 
@@ -254,6 +261,82 @@ class GeminiProvider:
         if not text:
             return None
         return AIResult.model_validate_json(text)
+
+    def read_assignee(self, prompt_text: str) -> str | None:
+        """Only the sender's PROMPT line goes in: no request text, no PDF (DESIGN section 21)."""
+        interaction = self._get_client().interactions.create(
+            model=self.model,
+            input=ASSIGNEE_PROMPT + prompt_text,
+            response_format={
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": ASSIGNEE_SCHEMA,
+            },
+            generation_config={"temperature": 0},
+            store=False,
+        )
+        text = getattr(interaction, "output_text", None)
+        if not text:
+            return None
+        return AssigneeAnswer.model_validate_json(text).name
+
+
+# --- Reading the assignee's name from a PROMPT line (DESIGN section 21) ------------------------
+
+ASSIGNEE_PROMPT = (
+    "A member of a GRC team typed the instruction below to a task tracker. Return the name of "
+    "the person they want to do the task, copied exactly as written (keep any typo), or null "
+    "if no person is named for doing it. Ignore a reviewer's name. Never invent a name.\n\n"
+    "Instruction: "
+)
+ASSIGNEE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"name": {"type": ["string", "null"]}},
+    "required": ["name"],
+}
+
+
+class AssigneeAnswer(BaseModel):
+    name: str | None = None
+
+
+def _plain(text: str) -> str:
+    return re.sub(r"\s+", " ", text.casefold()).strip()
+
+
+def read_assignee(provider: AIProvider, prompt_text: str, timeout: float = TIMEOUT_SECONDS) -> str:
+    """The name the AI reads in the PROMPT line, or "" (no AI, failure, or a name that is not
+    in the text). Never raises; logs no text."""
+    reader = getattr(provider, "read_assignee", None)
+    if isinstance(provider, NullProvider) or reader is None:
+        return ""
+    started = time.monotonic()
+    error_type = ""
+    name: str | None = None
+    try:
+        name = _executor.submit(reader, prompt_text[:1000]).result(timeout=timeout)
+    except NotConfigured:
+        error_type = "NotConfigured"
+    except FutureTimeout:
+        error_type = "Timeout"
+    except ValidationError:
+        error_type = "InvalidResponse"
+    except Exception as error:  # any SDK/network error: the task is logged with a flag
+        error_type = type(error).__name__
+    name = (name or "").strip()
+    if name and _plain(name) not in _plain(prompt_text):
+        name, error_type = "", "NameNotInText"  # guardrail: the AI reads, it never invents
+    logger.info(
+        "ai_assignee_call",
+        extra={
+            "provider": provider.name,
+            "model": provider.model,
+            "latency_ms": round((time.monotonic() - started) * 1000),
+            "success": bool(name),
+            "error_type": error_type,
+        },
+    )
+    return name
 
 
 def gemini_api_key(secret_name: str, project: str) -> Callable[[], str]:

@@ -235,7 +235,10 @@ class FakeAIProvider:
         result: AIResult | dict[str, Any] | None = None,
         error: Exception | None = None,
         delay: float = 0.0,
+        assignee: str | None = None,
     ):
+        self.assignee = assignee
+        self.assignee_calls: list[str] = []
         if isinstance(result, dict):
             result = AIResult.model_validate_json(json.dumps(result, default=str))
         self.result = result
@@ -265,6 +268,12 @@ class FakeAIProvider:
         if self.error is not None:
             raise self.error
         return self.result
+
+    def read_assignee(self, prompt_text: str) -> str | None:
+        self.assignee_calls.append(prompt_text)
+        if self.error is not None:
+            raise self.error
+        return self.assignee
 
 
 class FakeGmailClient:

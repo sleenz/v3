@@ -56,8 +56,14 @@ from app.models import (
     wa_number,
 )
 from app.notify import with_files
-from app.pipeline import SERVICE_USER, Services, process_request
-from app.route import NEEDS_REVIEW_FLAG, match_staff_name, sender_assignment
+from app.pipeline import (
+    SERVICE_USER,
+    Services,
+    choose_sender_owner,
+    process_request,
+    staff_match,
+)
+from app.route import NEEDS_REVIEW_FLAG, sender_assignment
 from app.sheets import SheetStore
 
 logger = logging.getLogger("grc.whatsapp")
@@ -671,9 +677,11 @@ def _apply_late_prompt(task_id: str, prompt: str, ctx: WaContext, now: datetime)
     audits: list[tuple[str, str, str]] = []
     flags = list(task.flags)
     asked = overrides(prompt, now.date())
-    name = asked.assign_to
-    if name and match_staff_name(name, store.staff()) is None:
-        replies.append(f'I couldn\'t find "{name}" in the Staff tab, so the owner is unchanged.')
+    choice = choose_sender_owner(prompt, asked, store.staff(), ctx.services.ai)
+    name = choice.name
+    flags += [f for f in choice.flags if "not found" not in f and "couldn't read" not in f]
+    if not name and choice.flags:
+        replies.append("I couldn't tell who to assign it to, so the owner is unchanged.")
     elif name:
         current = RouteResult(
             owner=task.owner or None,
@@ -696,7 +704,7 @@ def _apply_late_prompt(task_id: str, prompt: str, ctx: WaContext, now: datetime)
         replies.append(f"proposed owner is now {routed.owner}")
         audits.append(("Owner", task.owner, str(routed.owner)))
     if asked.reviewer:
-        person = match_staff_name(asked.reviewer, store.staff())
+        person, _ = staff_match(asked.reviewer, store.staff())
         if person is None:
             replies.append(f'I couldn\'t find reviewer "{asked.reviewer}" in the Staff tab.')
         else:
