@@ -7,6 +7,10 @@ need to install anything on your computer.
 Plan about **1 to 2 hours**. Most of that is waiting for builds and clicking through Google's
 consent screens.
 
+**Taking over from the prototype?** Start with [`HANDOVER_IT.md`](HANDOVER_IT.md): what you
+receive, what you create, and the switchover order. [Moving to a new project](#moving-to-a-new-project)
+at the end has the details on secrets.
+
 ---
 
 ## What this service does
@@ -27,7 +31,7 @@ sends reminders. The Google Sheet is the only database. There is no other server
 | Piece | Where | Name |
 |---|---|---|
 | The service | Cloud Run, region **asia-southeast2 (Jakarta)** | `v2-git` |
-| Timed runs | Cloud Scheduler | `grc-gmail`, `grc-changes`, `grc-digest`, ... |
+| Timed runs | Cloud Scheduler | `grc-gmail`, `grc-changes`, `grc-reminders`, ... |
 | Passwords and keys | Secret Manager | `grc-gmail-refresh-token`, `grc-gemini-api-key`, ... |
 | Settings (not secret) | Secret Manager | `grc-env-prod` |
 | The service's own login | Service accounts | `grc-tracker-run`, `grc-tracker-scheduler` |
@@ -70,11 +74,13 @@ You need:
 Open <https://console.cloud.google.com>, select your project at the top, and click the
 **Cloud Shell** icon (`>_`, top right).
 
-Get the code (replace `OWNER/REPO` with the repository you were given). Use **one** of these:
+Get the code. Use **one** of these:
 
 ```bash
-git clone https://github.com/OWNER/REPO.git ~/V2
+git clone https://github.com/sleenz/v3.git ~/V2
 ```
+
+(A private repository asks you to sign in: run `gh auth login` once first.)
 
 Or, if you received a zip: in Cloud Shell click **⋮ > Upload**, choose the zip, then
 `unzip V2.zip -d ~` (or whatever the zip is called) so the folder is `~/V2`.
@@ -89,6 +95,9 @@ gcloud config set project YOUR-PROJECT-ID
 ```
 
 Your prompt now ends with `~/V2 (YOUR-PROJECT-ID)$`.
+
+If a `deploy/...` command later says **Permission denied**, run it with `bash` in front (for
+example `bash deploy/setup_gcp.sh`), or run once: `chmod +x deploy/*.sh`.
 
 ---
 
@@ -250,7 +259,8 @@ The service uses the GRC team's existing sheet. You do not need a new one.
    - **Staff** has every team member with `Email`, `Role` (`Manager`, `Full time`, `Intern` or
      `Additional help`) and `Divisions`. The division names must be **spelled exactly** as in the
      Catalog `Division` column. `Internship end date` is a real date or blank.
-   - Hidden tabs `_state` and `_failures` exist (README section 1 has their headers).
+   - Hidden tabs `_state` and `_failures` exist (README section 1 has their headers). The other
+     service tabs (`ProgressLog`, `_outbox`, `_reminders_sent`, …) are made in step 9.
    - *Optional:* a `Recurring` tab for repeating tasks (README section 1c has its columns).
 
 ---
@@ -306,9 +316,20 @@ curl -s "$(gcloud run services describe v2-git --region=asia-southeast2 --format
 deploy/setup_scheduler.sh
 ```
 
-This creates or updates the Cloud Scheduler jobs, and the Pub/Sub push subscription that makes
-email **instant**: Gmail announces each new email and the service logs it within about a minute.
-The script ends by starting that push. Check it worked:
+This creates or updates the Cloud Scheduler jobs (all Hong Kong time), and the Pub/Sub push
+subscription that makes email **instant**:
+
+| Job | When | What |
+|---|---|---|
+| `grc-gmail` | every 10 min | read the bot's inbox (backup for the instant push) |
+| `grc-changes` | every 2 min, 08:00–19:58 | assignment emails (with the task's files) after approval |
+| `grc-reminders` | every 15 min, weekdays | reminders at 10:00 / 10:15 / 14:00 / 16:30 and notices held overnight (DESIGN section 22) |
+| `grc-recurring` | 07:00 daily | tasks from the `Recurring` tab |
+| `grc-gmail-watch` | 06:23 daily | renews Gmail's instant push |
+| `grc-wa-drafts` | every 10 min | WhatsApp only |
+
+It deletes the old `grc-digest` and `grc-wa-reminders` jobs if they exist. The script ends by
+starting the Gmail push. Check it worked:
 
 ```bash
 gcloud logging read 'resource.labels.service_name="v2-git" AND (jsonPayload.message="gmail_watch" OR jsonPayload.message="gmail_watch_failed")' --freshness=10m --limit=2 --format='table(timestamp, jsonPayload.message, jsonPayload.status)'
@@ -328,15 +349,29 @@ gcloud scheduler jobs run grc-gmail --location=asia-southeast2
 
 ---
 
-## Step 9: Sheet guard (Apps Script)
+## Step 9: Sheet tabs and guard (Apps Script)
 
-This stops people from marking tasks Done without proof, and records every edit.
+The script lives **inside the sheet**, not in Cloud Shell: a `git pull` does not update it. Paste
+it again whenever `apps_script/audit.gs` changes.
 
 1. In the sheet: **Extensions > Apps Script**. Delete what is there and paste the whole content of
-   `apps_script/audit.gs` (open it in Cloud Shell with `cloudshell edit apps_script/audit.gs`,
-   select all, copy). Save.
-2. In the function menu choose `installAuditTrigger` and click **Run**. Accept the permissions.
-3. Choose `installValidation` and click **Run** once.
+   `apps_script/audit.gs` (on GitHub: open the file, **Copy raw file**; or in Cloud Shell
+   `cloudshell edit apps_script/audit.gs`, select all, copy). Save.
+2. In the function menu choose **`installServiceTabs`** and click **Run**. Accept the
+   permissions (on "Google hasn't verified this app": **Advanced > Go to … (unsafe)**; it is
+   your own script). It adds `ProgressLog` (visible) and the hidden tabs `_outbox`,
+   `_reminders_sent`, `_event_queue`, `_conversations`, `_snooze`, `_wa_window`. Safe to run
+   again; it only adds what is missing. **Without them, reminders do not run and typed changes
+   cannot be confirmed.**
+3. Choose `installAuditTrigger` and click **Run**. Every hand edit in Master is then written to
+   AuditLog, and Done without proof is undone.
+4. Choose `installValidation` and click **Run** once (dropdowns). If it fails with **"not allowed
+   on cells in typed columns"**, Master is a Sheets *table*: set the dropdowns in the table
+   instead (column header arrow > **Edit column type > Dropdown**). Status: `Proposed`,
+   `Not Started`, `In Progress`, `In Review`, `Approved`, `Returned`, `On Hold`, `Done`,
+   `Cancelled` (spelled exactly). Needs review: `Yes`, `No`.
+
+Run all of these as **your own** account (the sheet's owner), not the bot.
 
 ---
 
@@ -356,7 +391,15 @@ gcloud scheduler jobs run grc-gmail --location=asia-southeast2
    - the sender gets a reply from the bot with the task ID;
    - the email in the bot's Gmail has the label `GRC/Logged`.
 
-More tests (replies, ignored senders, assignment emails, review commands) are in
+4. **Assignment:** set that row's `Doer` to a Staff name and `Status` to `Not Started` (between
+   10:00 and 19:00 on a working day). Within 2 minutes the Doer gets the assignment email with
+   the PDF attached.
+5. **Reminders:** make a test task due today (Status `In Progress`, you as Doer). After 14:00 on a
+   working day run `gcloud scheduler jobs run grc-reminders --location=asia-southeast2`: you get
+   "[GRC] Due today, not done yet". Reply `udah 70%`: the bot answers "Reply YES to confirm";
+   reply `YES` and Progress becomes 70 %.
+
+More tests (replies, ignored senders, review commands, reminders M1–M7, typed replies O7) are in
 `docs/LIVE_TEST.md`.
 
 ---
@@ -418,4 +461,43 @@ them.
   Tasks by Google-signed tokens, Google Chat by its token, WhatsApp by Meta's signature.
 
 **Optional, later**: the Google Chat bot (README section 9) and the WhatsApp bot (README section
-9b). Both run on the same deployment; they only need their own settings and secrets.
+9b). Both run on the same deployment; they only need their own settings and secrets. For
+WhatsApp also submit the four templates in `whatsapp_templates/` in WhatsApp Manager.
+
+---
+
+## Moving to a new project
+
+Use this when the service moves from a prototype project to the company's project. **Do not
+export the keys to a file** (a file of keys is how they leak). Most of them cannot be reused
+anyway:
+
+| Secret | In the new project | Why |
+|---|---|---|
+| `grc-gmail-oauth-client`, `grc-gmail-refresh-token` | **Make new**: steps 3a–3c | The token works only with the OAuth client of the project that made it; it stops when the old project is deleted |
+| `grc-gemini-api-key` | **Make new**: step 4 | A key is tied to its project's quota and billing |
+| `grc-env-prod` | **Make new**: step 6 (`deploy/make_env.sh`) | It holds the project ID, service URL and account names of the old project |
+| `grc-wa-access-token`, `grc-wa-app-secret` | **Copy** (below), if WhatsApp is set up | They belong to the Meta app, not to a Google Cloud project |
+
+Do steps 1 to 6 in the **new** project (step 2 creates the empty secrets). Then copy each
+WhatsApp secret **straight from Secret Manager to Secret Manager**: the value is piped between
+the two projects and never shown or saved. Replace `OLD-PROJECT-ID` and `NEW-PROJECT-ID`; you
+need access to both:
+
+```bash
+gcloud secrets versions access latest --secret=grc-wa-access-token --project=OLD-PROJECT-ID | gcloud secrets versions add grc-wa-access-token --data-file=- --project=NEW-PROJECT-ID
+```
+```bash
+gcloud secrets versions access latest --secret=grc-wa-app-secret --project=OLD-PROJECT-ID | gcloud secrets versions add grc-wa-app-secret --data-file=- --project=NEW-PROJECT-ID
+```
+
+Each prints `Created version [1] of the secret`. Then continue with steps 7 to 10 in the new
+project, and finally:
+
+- In Meta (WhatsApp > Configuration > Webhook), change the callback URL to the **new** service URL.
+- The sheet: share it with the new project's `grc-tracker-run@NEW-PROJECT-ID...` account (step 5).
+- **Stop the old project**, so two services never read the same mailbox:
+  `gcloud scheduler jobs pause grc-gmail --location=asia-southeast2 --project=OLD-PROJECT-ID`
+  (and the other `grc-*` jobs), or delete the old project once the new one passes step 10. The
+  old project's Gmail token is then revoked: bot's Google Account > Security > Third-party
+  connections > remove "GRC Tracker".
