@@ -554,7 +554,10 @@ def test_health_warns_about_divisions_nobody_covers(monkeypatch):
     warnings = main_module.uncovered_divisions(store_with())
     assert warnings and all(w.startswith("nobody in Staff covers division") for w in warnings)
     assert not any("Account & Finance" in w for w in warnings)  # Lead Finance covers it
-    healthy = main_module.Health(missing=[], sheet=[], checked_at=0.0, warnings=warnings)
+    import time
+
+    healthy = main_module.Health(missing=[], sheet=[], checked_at=time.monotonic(),
+                                 warnings=warnings)  # fmt: skip
     monkeypatch.setattr(main_module, "_health", healthy)
     response = TestClient(main_module.app).get("/health")
     assert response.status_code == 200 and response.json()["warnings"] == warnings

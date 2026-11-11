@@ -145,12 +145,14 @@ def uncovered_divisions(store: SheetStore) -> list[str]:
 
 
 def current_health() -> Health | None:
-    """The startup result; sheet problems are re-checked at most once a minute, so fixing the
-    sheet needs no redeploy (missing variables do: they only change with a new revision)."""
+    """The startup result; sheet problems and warnings are re-checked at most once a minute, so
+    fixing the sheet (adding a tab, a column, a Staff division) needs no redeploy. Missing
+    variables are not re-checked: they only change with a new revision."""
     global _health
     health = _health
     stale = health is not None and time.monotonic() - health.checked_at > RECHECK_SECONDS
-    if stale and health is not None and health.sheet and not health.missing:
+    sheet_said_something = health is not None and bool(health.sheet or health.warnings)
+    if stale and health is not None and sheet_said_something and not health.missing:
         _health = health = check_startup(get_settings())
     return health
 
