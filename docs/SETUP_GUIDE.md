@@ -7,8 +7,9 @@ need to install anything on your computer.
 Plan about **1 to 2 hours**. Most of that is waiting for builds and clicking through Google's
 consent screens.
 
-**Moving from an existing (prototype) project?** Read [Moving to a new project](#moving-to-a-new-project)
-at the end first: most keys are made new in the new project, not copied.
+**Taking over from the prototype?** Start with [`HANDOVER_IT.md`](HANDOVER_IT.md): what you
+receive, what you create, and the switchover order. [Moving to a new project](#moving-to-a-new-project)
+at the end has the details on secrets.
 
 ---
 
