@@ -306,3 +306,24 @@ def test_a_command_reply_to_a_single_task_notice_needs_no_task_id():
         assert process_inbox(gmail, services).commands == 1
     store.load()
     assert next(t for t in store.tasks() if t.id == task_id).progress_value == 0.6
+
+
+def test_one_failed_email_does_not_stop_the_others_and_is_kept_for_later():
+    store, gmail = make()
+    add(store, "late p", MONDAY - timedelta(days=1))  # Doer Staff P
+    add(store, "late a", MONDAY - timedelta(days=1), Doer="Staff A")
+    real_send = gmail.send
+
+    def flaky(email, sender_name):
+        if "staff.p@example.com" in email.to:
+            raise OSError("smtp")
+        return real_send(email, sender_name)
+
+    gmail.send = flaky
+    run = run_reminders(store, gmail, None, SHEET, now=at(MONDAY, 10))
+    assert run.failed == 1 and len(sent_to(gmail, "staff.a@example.com")) == 1
+    kept = [r for r in store.service_rows(REMINDERS_SENT, ReminderSent) if r.person == "Staff P"]
+    assert kept and all(r.sent_at is None for r in kept)  # merged into the next message
+    gmail.send = real_send
+    run_reminders(store, gmail, None, SHEET, now=at(MONDAY, 14))
+    assert len(sent_to(gmail, "staff.p@example.com")) == 1

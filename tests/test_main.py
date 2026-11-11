@@ -193,6 +193,18 @@ def test_sheet_problems_are_rechecked_without_a_redeploy(monkeypatch):
     assert TestClient(app).get("/health").status_code == 200
 
 
+def test_warnings_are_rechecked_too(monkeypatch):
+    """A tab added by installServiceTabs() clears its warning within a minute, no restart."""
+    from app import main as main_module
+
+    stale = main_module.Health(missing=[], sheet=[], checked_at=-1e9,
+                               warnings=["missing tab _outbox (reminders ...)"])  # fmt: skip
+    monkeypatch.setattr(main_module, "_health", stale)
+    fixed = main_module.Health(missing=[], sheet=[], checked_at=0.0)
+    monkeypatch.setattr(main_module, "check_startup", lambda settings: fixed)
+    assert TestClient(app).get("/health").json() == {"status": "ok"}
+
+
 # --- instant email: Gmail push via Pub/Sub (DESIGN section 20) --------------------------------
 
 

@@ -34,7 +34,6 @@ from app.whatsapp import (
     parse_prompt,
     parse_webhook,
     run_wa_drafts,
-    run_wa_reminders,
     signature_ok,
     verify_challenge,
 )
@@ -467,23 +466,6 @@ def open_task_for(ctx, doer: str, due: date) -> None:
     )
 
 
-def test_reminders_once_a_day_after_reminder_time():
-    ctx = context()
-    open_task_for(ctx, "Staff A", date(2026, 10, 28))  # due within 7 days
-    wa = ctx.wa
-    early = now().replace(hour=8, minute=30)
-    assert run_wa_reminders(ctx.store, wa, "https://sheet", now=early).due is False
-    run = run_wa_reminders(ctx.store, wa, "https://sheet", now=now())
-    assert (run.due, run.sent) == (True, 1)
-    assert wa.templates == [
-        (A, "grc_daily_reminder", "en", ["Staff A", "0", "1", "0", "https://sheet"])
-    ]
-    ctx.store.load()
-    assert run_wa_reminders(ctx.store, wa, "https://sheet", now=now()).sent == 0  # once a day
-    saturday = datetime(2026, 10, 31, 10, 0, tzinfo=clock.TZ)
-    assert run_wa_reminders(ctx.store, wa, "https://sheet", now=saturday).due is False
-
-
 # --- Graph API and Cloud Tasks clients ----------------------------------------------------------
 
 
@@ -510,15 +492,21 @@ def test_graph_client_request_shapes():
 
     client = GraphWhatsApp("PNID", SecretStr("token-not-real"), "v99.0", urlopen=urlopen)
     client.send_text(A, "hi")
-    client.send_template(A, "grc_daily_reminder", "en", ["Staff A", "1"])
+    client.send_template(A, "grc_pagi", "id", ["Staff A", "1"], ["view:morning:2026-10-26"])
     assert client.download_media("media-1") == b"%PDF"
     sent, template, info, data = calls
     assert sent.full_url == "https://graph.facebook.com/v99.0/PNID/messages"
     assert sent.get_header("Authorization") == "Bearer token-not-real"
     assert json.loads(sent.data)["text"]["body"] == "hi"
     body = json.loads(template.data)["template"]
-    assert body["name"] == "grc_daily_reminder" and body["language"] == {"code": "en"}
+    assert body["name"] == "grc_pagi" and body["language"] == {"code": "id"}
     assert body["components"][0]["parameters"][1] == {"type": "text", "text": "1"}
+    assert body["components"][1] == {
+        "type": "button",
+        "sub_type": "quick_reply",
+        "index": "0",
+        "parameters": [{"type": "payload", "payload": "view:morning:2026-10-26"}],
+    }
     assert info.data is None and data.get_header("Authorization") == "Bearer token-not-real"
 
 

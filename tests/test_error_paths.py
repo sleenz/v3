@@ -6,7 +6,7 @@ import pytest
 
 from app import clock
 from app.extract.ai import NullProvider
-from app.jobs import run_changes, run_digest
+from app.jobs import run_changes
 from app.models import AppConfig, RawRequest
 from app.pipeline import Services, process_request
 from app.sheets import GoogleSheetsBackend, SchemaError
@@ -80,31 +80,6 @@ def test_changes_audit_failure_does_not_resend(caplog):
     svc.store.load()
     assert run_changes(svc.store, gmail, SHEET).emailed == 0
     assert len(gmail.sent) == 1
-
-
-def test_digest_send_failure_continues_with_others():
-    svc = make()
-    for i, text in enumerate(
-        [
-            "Laporan stress test, deadline 27 Oktober 2026.",
-            "Laporan ATMR, deadline 28 Oktober 2026.",
-        ]
-    ):
-        result = process_request(raw(text, f"m{i}"), svc)
-        svc.store.update_task(result.task_id, {"Status": "Not Started"})
-    svc.store.load()
-    gmail = FakeGmailClient()
-    sent = []
-
-    def flaky(email, sender):
-        if email.to == ["staff.a@example.com"]:
-            raise OSError("smtp")
-        sent.append(email.to)
-
-    gmail.send = flaky
-    run = run_digest(svc.store, gmail, SHEET)
-    assert run.failed == 1
-    assert ["staff.g@example.com"] in sent
 
 
 # --- Config values as Sheets returns them ------------------------------------------------------
