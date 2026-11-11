@@ -1,12 +1,12 @@
 """The Recurring tab (v1.4 part 3, DESIGN section 20) with fakes. Names are fake."""
 
-from datetime import date, datetime
+from datetime import date
 
 import pytest
 
-from app import clock, recurring
+from app import recurring
 from app.extract.ai import NullProvider
-from app.jobs import recurring_problems, run_changes, run_digest, run_recurring
+from app.jobs import manager_extras, recurring_problems, run_changes, run_recurring
 from app.models import RecurringRule
 from app.pipeline import Services
 from tests.fakes import FakeDriveStore, FakeGmailClient, FakeSheetStore
@@ -311,13 +311,13 @@ def test_recurring_command_lists_rows_and_problems():
     assert refused.startswith("Only the manager")
 
 
-def test_manager_digest_lists_skipped_rows():
+def test_manager_summary_lists_skipped_rows():
     svc = services(row(Name="Ghost", Doer="Nobody Here"))
-    gmail = FakeGmailClient()
-    run_digest(svc.store, gmail, SHEET, datetime(2026, 11, 9, 9, 0, tzinfo=clock.TZ))
-    manager = [email for email, _ in gmail.sent if email.to == ["manager@example.com"]]
-    assert manager and "Recurring rows skipped" in manager[0].text
-    assert "Nobody Here" in manager[0].text
+    store = svc.store
+    tasks = [t for t in store.tasks() if t.id]
+    found = dict(manager_extras(store, tasks, store.staff(), store.config(), date(2026, 11, 9)))
+    [problem] = found["Recurring rows skipped (fix them in the Recurring tab)"]
+    assert "Nobody Here" in problem
 
 
 def test_health_shows_a_count_and_no_names(monkeypatch):

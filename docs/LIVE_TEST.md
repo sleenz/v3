@@ -50,7 +50,7 @@ Send from a phone whose number is in the Staff `WhatsApp` column, to the bot's n
 | W5 | Reply to the deadline question with a different date, e.g. `27/11/2026`. | "Updated G-…: due Fri 27 Nov 2026"; `Due date` changed; AuditLog `Deadline corrected`. |
 | W6 | Send a PDF letter with no text. | Logged 30 s later; title and deadline read from the PDF; `Files` reads `In the GRC bot mailbox: <file>`. |
 | W7 | From a number not in Staff, send anything. | One reply: "This number isn't registered …"; no row. |
-| W8 | Weekday, after Config `Reminder time`, someone with a `WhatsApp` number has a task due this week. | Within 30 minutes they get the `grc_daily_reminder` template; only once that day. |
+| W8 | WhatsApp reminders are now part of the reminder schedule: see M7 below. | — |
 | W9 | Forward a request, then within 30 s `PROMPT inject: assign this to <Staff first name> with reviewer <another Staff first name> deadline 3 days from now`. | Owner/Doer = the first person, `Reviewer` = the second, `Needs review` = Yes, `Due date` = 3 calendar days on (weekend → Friday). The reply says "as in your PROMPT" and asks no YES question. Status `Proposed`. |
 | W10 | As a Staff member, email the bot a forward with the same PROMPT line as the first paragraph, and a new subject. | Same result as W9; Routing note starts `Assigned by sender (Email PROMPT)`. From an address not in Staff: no change, flag `PROMPT ignored: sender is not in Staff`. |
 

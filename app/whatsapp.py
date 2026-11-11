@@ -29,7 +29,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, SecretStr
@@ -40,13 +40,10 @@ from app.commands import Command, parse_command, task_id_in
 from app.extract.prompt import assignee, parse_prompt
 from app.extract.rules import find_dates
 from app.gmail import GmailClient
-from app.jobs import personal_buckets
 from app.lifecycle import CommandContext, CommandResult, run_command
 from app.models import (
-    OPEN_STATUSES,
     Attachment,
     AuditEntry,
-    FailureRow,
     OutgoingEmail,
     RawRequest,
     RouteResult,
@@ -76,8 +73,6 @@ LATE_PROMPT_MINUTES = 5  # a PROMPT this soon after logging still applies to tha
 KEEP_DAYS = 7  # finished rows are pruned after this long
 MAX_MEDIA_BYTES = 25 * 1024 * 1024
 MAX_TEXT_CHARS = 4096  # WhatsApp's limit for one text message
-REMINDER_TEMPLATE = "grc_daily_reminder"
-TEMPLATE_LANGUAGE = "en"
 DEADLINE_FLAG = "Deadline not confirmed by sender (WhatsApp)"
 DEFAULT_DUE_FLAG = "No deadline found, default used"
 
@@ -1273,53 +1268,4 @@ def run_wa_drafts(ctx: WaContext, now: datetime | None = None) -> WaDraftsRun:
 
     run.pruned = ctx.store.edit_wa_pending(prune)
     logger.info("wa_drafts_run", extra={f"n_{k}": v for k, v in run.model_dump().items()})
-    return run
-
-
-class WaRemindersRun(BaseModel):  # counts only
-    sent: int = 0
-    failed: int = 0
-    due: bool = False
-
-
-def _reminder_time(value: str) -> time | None:
-    match = re.match(r"^\s*(\d{1,2})[:.](\d{2})", value or "")
-    if not match:
-        return None
-    hour, minute = int(match.group(1)), int(match.group(2))
-    return time(hour, minute) if hour < 24 and minute < 60 else None
-
-
-def run_wa_reminders(
-    store: SheetStore, wa: WhatsAppClient, sheet_url: str, now: datetime | None = None
-) -> WaRemindersRun:
-    """Weekdays, once a day at the first run after Config `Reminder time`: each person with a
-    WhatsApp number and something overdue, due within 7 days or stale gets the template."""
-    now = now or clock.now()
-    run = WaRemindersRun()
-    config = store.config()
-    at = _reminder_time(config.reminder_time)
-    if at is None:
-        logger.warning("wa_reminders_bad_time")
-        return run
-    marker = f"wa-reminders:{now.date().isoformat()}"
-    if now.weekday() >= 5 or now.time() < at or marker in store.failures():
-        return run
-    run.due = True
-    open_tasks = [task for task in store.tasks() if task.id and task.status in OPEN_STATUSES]
-    for person in store.staff():
-        if not person.wa_id:
-            continue
-        overdue, due_soon, stale = personal_buckets(person, open_tasks, now, config)
-        if not (overdue or due_soon or stale):
-            continue
-        params = [person.name, str(len(overdue)), str(len(due_soon)), str(len(stale)), sheet_url]
-        try:
-            wa.send_template(person.wa_id, REMINDER_TEMPLATE, TEMPLATE_LANGUAGE, params)
-            run.sent += 1
-        except Exception as error:
-            run.failed += 1
-            logger.error("wa_reminder_failed", extra={"error_type": type(error).__name__})
-    store.upsert_failure(FailureRow(key=marker, count=run.sent, last_at=now))
-    logger.info("wa_reminders_run", extra={"n_sent": run.sent, "n_failed": run.failed})
     return run

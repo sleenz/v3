@@ -566,7 +566,8 @@ WhatsApp Cloud API with a number and app that BRI registers in Meta Business Man
    retries; `/jobs/wa-drafts` (every 10 min) logs open drafts older than 2 minutes and retries
    ones stuck for 10 minutes, and prunes finished rows after 7 days. If the queue is down, the
    webhook answers 500 so Meta resends.
-9. **Reminders:** weekdays at the first `/jobs/wa-reminders` run after Config `Reminder time`,
+9. **Reminders** *(replaced by section 22; kept for reference)*: weekdays at the first
+   `/jobs/wa-reminders` run after Config `Reminder time`,
    each Staff member with a `WhatsApp` number and something overdue, due within 7 days or stale
    gets the template `grc_daily_reminder` (language `en`), parameters: name, overdue count,
    due-soon count, stale count, sheet link. Templates are required outside the 24-hour window;

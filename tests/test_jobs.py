@@ -1,11 +1,11 @@
-from datetime import date, datetime, timedelta
+from datetime import date
 
 from app import clock
 from app.extract.ai import NullProvider
 from app.jobs import (
     NO_EMAIL_FLAG,
+    manager_extras,
     run_changes,
-    run_digest,
 )
 from app.models import RawRequest, Task
 from app.pipeline import Services, process_request
@@ -162,69 +162,31 @@ def test_row_added_by_hand_after_go_live_is_emailed():
     assert run.emailed == 1 and gmail.sent[0][0].to == ["staff.p@example.com"]
 
 
-# --- /jobs/digest ------------------------------------------------------------------------------
+# --- Manager summary extras (the 10:15 team summary, DESIGN sections 8 and 22) ---------------
 
 
-def digest(svc, gmail, now=None):
-    return run_digest(reload(svc), gmail, SHEET, now or clock.now())
+def extras(svc, now=None) -> dict:
+    store = reload(svc)
+    today = (now or clock.now()).date()
+    tasks = [t for t in store.tasks() if t.id]
+    found = manager_extras(store, tasks, store.staff(), store.config(), today)
+    return {title: lines for title, lines in found}
 
 
-def test_digest_skips_empty_and_excludes_proposed():
-    svc, gmail = make()
-    new_task(svc, "Laporan stress test, deadline 27 Oktober 2026.", "m1")  # Proposed, due soon
-    run = digest(svc, gmail)
-    assert run.personal_sent == 0
-    # the manager still hears about it as awaiting approval
-    assert run.manager_sent
-    [(email, _)] = gmail.sent
-    assert email.to == ["manager@example.com"]
-    assert "Awaiting approval (1)" in email.text
-    assert "Overdue" not in email.text
-
-
-def test_nothing_to_report_sends_nothing():
-    svc, gmail = make()
-    run = digest(svc, gmail)
-    assert (run.personal_sent, run.manager_sent) == (0, False)
-    assert gmail.sent == []
-
-
-def test_personal_digest_sections():
-    svc, gmail = make()
-    overdue = new_task(svc, "Laporan stress test, paling lambat 20 Oktober 2026.", "m1")
-    soon = new_task(svc, "Laporan stress test, deadline 30 Oktober 2026.", "m2")
-    later = new_task(svc, "Laporan stress test, deadline 30 Desember 2026.", "m3")
-    stale = new_task(svc, "Laporan stress test, deadline 31 Desember 2026.", "m4")
-    for task_id in (overdue, soon, later):
-        svc.store.update_task(task_id, {"Status": "Not Started"})
-    svc.store.update_task(
-        stale, {"Status": "In Progress", "Last updated": clock.now() - timedelta(days=6)}
-    )
-    run = digest(svc, gmail)
-    assert run.personal_sent == 1
-    personal = next(email for email, _ in gmail.sent if email.to == ["staff.a@example.com"])
-    text = personal.text
-    assert f"Overdue (1)\n  - {overdue}" in text
-    assert f"Due within 7 days (1)\n  - {soon}" in text
-    assert f"In progress, not updated recently (1)\n  - {stale}" in text
-    assert later not in text
-
-
-def test_manager_digest_lists_leaving_interns_who_own_reports_and_overload():
+def test_manager_extras_list_leaving_interns_who_own_reports_and_overload():
     backend = FakeSheetsBackend.from_fixtures()
     set_cell(backend, "Staff", "Name", "Staff F", "Internship end date", "2026-11-15")
     set_cell(backend, "Staff", "Name", "Staff G", "Weighted open load", 12)
-    svc, gmail = make(backend)
-    run = digest(svc, gmail)
-    assert run.manager_sent
-    text = gmail.sent[0][0].text
-    assert "Interns leaving who still own Catalog reports (1)" in text
-    assert "Staff F leaves 15 Nov 2026; default owner of" in text and "HR-DATA" in text
-    assert "Staff G: load 12 (threshold 10)" in text
+    svc, _ = make(backend)
+    found = extras(svc)
+    [leaving] = found["Interns leaving who still own Catalog reports"]
+    assert leaving.startswith("Staff F leaves 15 Nov 2026; default owner of")
+    assert "HR-DATA" in leaving
+    assert "Staff G: load 12 (threshold 10)" in found["Over the load threshold"]
 
 
-def test_manager_digest_counts_ai_unavailable_last_24h():
-    svc, gmail = make()
+def test_manager_extras_count_ai_unavailable_last_24h():
+    svc, _ = make()
     svc.store.append_task(
         Task(title="T", status="Not Started", doer="Staff A", flag="AI unavailable",
              start=TODAY, due_date=date(2026, 12, 1))
@@ -233,22 +195,9 @@ def test_manager_digest_counts_ai_unavailable_last_24h():
         Task(title="Old", status="Not Started", doer="Staff A", flag="AI unavailable",
              start=date(2026, 10, 1), due_date=date(2026, 12, 1))
     )  # fmt: skip
-    digest(svc, gmail)
-    assert "AI unavailable (last 24 h) (1)\n  - 1 request(s)" in gmail.sent[0][0].text
+    assert extras(svc)["AI unavailable (last 24 h)"] == ["1 request(s)"]
 
 
-def test_no_manager_email_skips_manager_digest():
-    backend = FakeSheetsBackend.from_fixtures()
-    set_cell(backend, "Config", "Setting", "Manager email", "Value", "")
-    svc, gmail = make(backend)
-    new_task(svc, "Tolong cek printer", "m1")
-    assert digest(svc, gmail).manager_sent is False
-
-
-def test_digest_uses_now_for_staleness():
-    svc, gmail = make()
-    task_id = new_task(svc, "Laporan stress test, deadline 31 Desember 2026.", "m1")
-    svc.store.update_task(task_id, {"Status": "In Progress"})
-    assert digest(svc, gmail).personal_sent == 0
-    later = datetime(2026, 11, 2, 9, 0, tzinfo=clock.TZ)
-    assert digest(svc, FakeGmailClient(), later).personal_sent == 1
+def test_manager_extras_are_empty_when_nothing_stands_out():
+    svc, _ = make()
+    assert all(not lines for lines in extras(svc).values())

@@ -24,9 +24,6 @@ from app.models import (
 from app.notify import (
     MissingEmail,
     assignment_email,
-    manager_digest,
-    personal_digest,
-    task_line,
     with_files,
 )
 from app.pipeline import SERVICE_USER, Services
@@ -343,34 +340,6 @@ def run_recurring(services: Services, today: date | None = None) -> RecurringRun
 # --- /jobs/digest ------------------------------------------------------------------------------
 
 
-class DigestRun(BaseModel):
-    personal_sent: int = 0
-    manager_sent: bool = False
-    failed: int = 0
-
-
-def _open(tasks: list[Task]) -> list[Task]:
-    return [task for task in tasks if task.status in OPEN_STATUSES]
-
-
-def personal_buckets(
-    person: StaffMember, open_tasks: list[Task], now: datetime, config: AppConfig
-) -> tuple[list[Task], list[Task], list[Task]]:
-    """(overdue, due within 7 days, In Progress not updated for `Stale after (days)`) for one
-    person's open tasks: the personal digest, by email and (v1.3) on WhatsApp."""
-    today = now.date()
-    stale_before = now - timedelta(days=config.stale_after_days)
-    mine = [t for t in open_tasks if t.doer.strip().casefold() == person.name.casefold()]
-    overdue = [t for t in mine if t.due_date and t.due_date < today]
-    due_soon = [t for t in mine if t.due_date and today <= t.due_date <= today + timedelta(7)]
-    stale = [
-        t
-        for t in mine
-        if t.status == "In Progress" and t.last_updated and t.last_updated < stale_before
-    ]
-    return overdue, due_soon, stale
-
-
 def manager_extras(
     store: SheetStore,
     tasks: list[Task],
@@ -412,49 +381,3 @@ def manager_extras(
             recurring_problems(store, today),
         ),
     ]
-
-
-def run_digest(
-    store: SheetStore, gmail: GmailClient, sheet_url: str, now: datetime | None = None
-) -> DigestRun:
-    now = now or clock.now()
-    today = now.date()
-    config = store.config()
-    tasks = [task for task in store.tasks() if task.id]
-    staff = store.staff()
-    open_tasks = _open(tasks)  # Proposed is not open, so it never appears in personal digests
-    label = f"{today:%a %d %b %Y}"
-    run = DigestRun()
-
-    def send(email, kind: str) -> bool:
-        try:
-            gmail.send(email, config.sender_name)
-            return True
-        except GmailAuthError:
-            raise
-        except Exception as error:
-            run.failed += 1
-            logger.error("digest_failed", extra={"kind": kind, "error_type": type(error).__name__})
-            return False
-
-    for person in staff:
-        if not person.email.strip():
-            continue
-        overdue, due_soon, stale = personal_buckets(person, open_tasks, now, config)
-        email = personal_digest(person, overdue, due_soon, stale, sheet_url, label)
-        if email is not None and send(email, "personal"):
-            run.personal_sent += 1
-
-    if not config.manager_email.strip():
-        logger.warning("manager_digest_skipped_no_email")
-        return run
-    sections = [
-        ("Awaiting approval", [task_line(t) for t in tasks if t.status == "Proposed"]),
-        ("Overdue", [task_line(t) for t in open_tasks if t.due_date and t.due_date < today]),
-        *manager_extras(store, tasks, staff, config, today),
-    ]
-    email = manager_digest(config.manager_email.strip(), sections, sheet_url, label)
-    if email is not None:
-        run.manager_sent = send(email, "manager")
-    logger.info("digest_run", extra=_log_counts(run))
-    return run
