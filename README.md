@@ -278,6 +278,14 @@ Replaces the 09:00 digest and the old daily WhatsApp reminder.
       - The bot shows the change as before → after and asks for YES. If it was really a new
         request, they reply NO and it is logged as one.
       - `status G-0012` (or "how is G-0012?") answers from the sheet, by email or WhatsApp.
+- [ ] Several people on one task (DESIGN section 25), no setup needed (the `Support` column
+      already exists). Tell the team:
+      - "PROMPT: assign this to Cia and Enzo" makes Cia the Doer and Enzo Support. Use "or"
+        only for alternatives.
+      - `assign G-0012 to Cia and Enzo` (Manager) does the same on an existing task.
+      - Support gets the assignment email and files and the due-today reminders. They can
+        update progress, add notes and mark it blocked. Only the Doer sends it for review or
+        marks it done.
 - [ ] Tell the team how to update a task (DESIGN section 22):
       - WhatsApp: tap **Lihat tugas** in a reminder → one card per task with **Update progres**
         (25–100 %), **Selesai** or **Kirim review**, **Lainnya** (Selesai, Terhambat, Minta

@@ -159,3 +159,16 @@ Use a test task you are the Doer of (call it G-x). U3 and U4 need `AI provider` 
 | U4 | Repeat U3, then reply **NO**. | "Logged your email as a new request: G-…": a new row, and G-x is unchanged. |
 | U5 | Forward any email to the bot with "G-x" in it. | Logged as a new request, never read as an update. |
 | U6 | On WhatsApp: `how is G-x?` | The same status text as U1. |
+
+## Several people on one task (DESIGN section 25)
+
+You need the Manager (M) and two staff members (S1, S2).
+
+| # | Do this | Expected |
+|---|---------|----------|
+| T1 | From M, email a request with `PROMPT: assign this to <S1> and <S2>` and a PDF. | The row has Doer S1 and Support S2. Only S1 is asked to accept (if `Acceptance` exists). |
+| T2 | S1 accepts. Wait up to 2 minutes. | The assignment email goes to S1, cc S2, with the PDF. It lists Doer, Support and who does what. |
+| T3 | From S2, reply in that thread `G-… 40`, then `YES`. | Progress is 40 %. |
+| T4 | From S2: `done G-…` with a file. | "only <S1> can do that". Nothing changes. |
+| T5 | From M: `assign G-… to <S2> and <S1>`, then `YES`. | Doer S2, Support S1. |
+| T6 | On the due date, at 14:00. | The due-today reminder reaches S1 and S2. |

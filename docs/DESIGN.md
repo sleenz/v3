@@ -991,3 +991,35 @@ A Manager's PROMPT counts as the manager's approval. The person named still has 
   - `Minta G-0012 due 20 Nov 2026 → 27 Nov 2026`
   - `Serahkan G-0012: doer Staff A → Staff P`
   - The same pattern for review, done, approve and return.
+
+## 25. Tasks with several people: one Doer plus Support (v1.5 phase 3; approved 16 Nov 2026)
+
+A task keeps one Doer, who is accountable. Everyone else helping is listed in the existing
+Master column `Support`, `; `-separated (a `,` is read too). The Sheet's existing formulas
+(`Weighted open load`, `Support share`) are unchanged.
+
+- **Setting it.**
+  - A PROMPT whose names are joined by *and / dan / & / , / sama / serta*: "assign this to Cia
+    and Enzo". The first name is the Doer and the others are Support. This is read by rules
+    only; the AI may still pick the owner.
+  - Names joined by *or / atau* are alternatives: nothing goes to Support, and the rules
+    flag the owner as unclear, as before.
+  - The reviewer, the Owner and the Doer are never Support.
+  - The Manager's `assign G-0012 to Cia and Enzo` sets the Owner and Doer (R4/R5) and replaces
+    Support. One name leaves Support as it is.
+  - Only the Manager can assign several people. On a task waiting for acceptance (section 23),
+    the reassign does the same.
+- **Telling them.**
+  - The assignment email goes to the Doer, cc the Owner and Support, with the same files. It
+    lists Doer, Support and who does what.
+  - Only the Doer is asked to accept.
+- **Reminders.** Support gets the due-today and last-call reminders. The morning message
+  (days before due, overdue, stale) stays the Doer's.
+- **What Support can do.**
+  - Supporters can update progress, add notes and mark the task blocked, by email, WhatsApp
+    or typed text.
+  - Review, done, extension and snooze are for the Doer, the Owner and the Manager. Support
+    gets "only <Doer> can do that".
+  - The supported task shows in their `tugas` list marked `support`. Its WhatsApp card has
+    only **Update progres** and **Lainnya**.
+  - `status` lists the supporters.
