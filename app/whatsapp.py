@@ -721,6 +721,13 @@ def _handle_reply(
     replied_to_bot = bool(message.context_id) and (
         linked is not None or outbox.by_message(store, message.context_id) is not None
     )
+    if linked and not message.media:  # section 23: "ya" / "tidak bisa, cuti" to "Terima?"
+        from app import acceptance
+
+        task = next((t for t in store.tasks() if t.id == linked), None)
+        answer = acceptance.answer_in(text) if task and acceptance.pending(task) else None
+        if answer is not None and task.doer.strip().casefold() == person.name.casefold():
+            return _run_now(message, person, ctx, Command(answer[0], linked, answer[1]))
     if message.media and not (linked or replied_to_bot or task_id_in(text)):
         return None  # a file with a caption, not about a task: a new request
     all_tasks = [t for t in store.tasks() if t.id]

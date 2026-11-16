@@ -213,6 +213,7 @@ def test_whatsapp_templates_match_what_the_code_sends():
     import json
     import re
 
+    from app.acceptance import TEMPLATE_ASK
     from app.reminders import (
         TEMPLATE_DUE,
         TEMPLATE_LANGUAGE,
@@ -221,7 +222,9 @@ def test_whatsapp_templates_match_what_the_code_sends():
     )
     from app.wa_ui import TEMPLATE_UPDATE
 
-    params = {TEMPLATE_MORNING: 3, TEMPLATE_DUE: 3, TEMPLATE_MANAGER: 5, TEMPLATE_UPDATE: 2}
+    params = {TEMPLATE_MORNING: 3, TEMPLATE_DUE: 3, TEMPLATE_MANAGER: 5, TEMPLATE_UPDATE: 2,
+              TEMPLATE_ASK: 2}  # fmt: skip
+    buttons_of = {TEMPLATE_ASK: ["Terima", "Tolak"]}
     for name, count in params.items():
         spec = json.loads((ROOT / "whatsapp_templates" / f"{name}.json").read_text("utf-8"))
         assert spec["name"] == name and spec["language"] == TEMPLATE_LANGUAGE
@@ -231,7 +234,7 @@ def test_whatsapp_templates_match_what_the_code_sends():
         assert len(body["example"]["body_text"][0]) == count
         assert not body["text"].startswith("{{") and not body["text"].endswith("}}")
         buttons = next(c for c in spec["components"] if c["type"] == "BUTTONS")["buttons"]
-        assert [b["text"] for b in buttons] == ["Lihat tugas"]
+        assert [b["text"] for b in buttons] == buttons_of.get(name, ["Lihat tugas"])
 
 
 def test_change_job_runs_every_two_minutes():

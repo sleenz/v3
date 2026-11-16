@@ -51,9 +51,19 @@ class Services:
     ai: AIProvider
 
 
+def next_step(task: Task) -> str:
+    """What happens next, for the reply to the sender."""
+    if task.acceptance.strip().lower() == "pending":
+        return f"Assigned by the manager; waiting for {task.doer} to accept."
+    if task.status != "Proposed":
+        return f"Assigned by the manager to {task.doer}; started."
+    return "Waiting for manager approval."
+
+
 def _result(task: Task, created: bool, due_from_prompt: bool = False) -> TaskResult:
     return TaskResult(
         due_from_prompt=due_from_prompt,
+        next_step=next_step(task),
         task_id=task.id,
         created=created,
         title=task.title,
@@ -218,6 +228,13 @@ def decide_prompt(
     if used_ai:
         flags.insert(0, AI_READ_FLAG)
     return PromptDecision(owner, reviewer, due, list(dict.fromkeys(flags)))
+
+
+def _staff_member(store: SheetStore, email: str) -> StaffMember | None:
+    wanted = email.strip().lower()
+    if not wanted:
+        return None
+    return next((p for p in store.staff() if p.email.strip().lower() == wanted), None)
 
 
 def _is_staff(store: SheetStore, email: str) -> bool:
@@ -408,6 +425,24 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
     if note:
         notes = "\n".join(part for part in (notes, f"Sender's PROMPT: {note}") if part)
     source = raw.source_id if raw.source == "Recurring" else raw.source
+    # Section 23: a Manager's PROMPT that names the owner is the approval; the Doer is asked to
+    # accept (or it starts at once when the Manager names themselves). Needs the Master column
+    # `Acceptance`; without it the task waits for approval as before.
+    status, acceptance = "Proposed", ""
+    sender = _staff_member(store, raw.sender_email)
+    doer_name = routed.doer or routed.owner or ""
+    if (
+        note
+        and decision.owner
+        and doer_name
+        and sender is not None
+        and sender.role == "Manager"
+        and "Acceptance" in store.master_header()
+    ):
+        if doer_name.casefold() == sender.name.casefold():
+            status, acceptance = "Not Started", "Accepted"
+        else:
+            acceptance = "Pending"
     task = Task(
         title=title,
         catalog_id=routed.catalog_id or "",
@@ -419,7 +454,8 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
         letter_code=letter.letter_code if letter else "",
         start=raw.received_at.astimezone(clock.TZ).date(),
         due_date=due_date,
-        status="Proposed",
+        status=status,
+        acceptance=acceptance,
         last_updated=clock.now(),
         notes=notes,
         flag="; ".join(dict.fromkeys(flags)),

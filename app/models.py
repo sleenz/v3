@@ -312,6 +312,8 @@ class Task(_SheetRow):
     review_notes: str = Field(default="", alias="Review notes")
     reminder_profile: str = Field(default="", alias="Reminder profile")
     review_file: str = Field(default="", alias="Review file")
+    # Assignment acceptance (DESIGN section 23): Pending / Accepted / Declined; blank = not asked.
+    acceptance: str = Field(default="", alias="Acceptance")
 
     _dates = field_validator("start", "due_date", "submitted_date", "last_updated", mode="before")(
         _blank_to_none
@@ -342,6 +344,7 @@ class Task(_SheetRow):
 # that needs one says which column to add.
 REVIEW_COLUMNS: tuple[str, ...] = (
     "Needs review", "Reviewer", "Review notes", "Reminder profile", "Review file",
+    "Acceptance",  # section 23
 )  # fmt: skip
 MASTER_REQUIRED_COLUMNS: tuple[str, ...] = (
     *(f.alias for f in Task.model_fields.values() if f.alias and f.alias not in REVIEW_COLUMNS),
@@ -371,6 +374,7 @@ class TaskResult(BaseModel):
     flags: list[str] = Field(default_factory=list)
     files_url: str = ""
     due_from_prompt: bool = False  # the sender's PROMPT set the deadline (section 21)
+    next_step: str = ""  # "Waiting for manager approval." or "...waiting for X to accept." (s. 23)
 
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
@@ -542,7 +546,7 @@ class ProgressRow(_SheetRow):
 
 
 ConversationStep = Literal["blocked_reason", "extension_date", "done_proof", "review_file",
-                           "return_notes", "confirm"]  # fmt: skip
+                           "return_notes", "confirm", "decline_reason"]  # fmt: skip
 
 
 class Conversation(_SheetRow):

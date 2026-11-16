@@ -140,7 +140,8 @@ def acknowledgement_email(result: TaskResult, original: HasSender) -> OutgoingEm
         f"Flags: {'; '.join(result.flags) if result.flags else 'none'}",
         f"Files: {result.files_url or 'none'}",
         "",
-        "Waiting for manager approval. This is an automatic reply from the GRC tracker.",
+        f"{result.next_step or 'Waiting for manager approval.'} "
+        "This is an automatic reply from the GRC tracker.",
     ]
     html = "".join(f"<p>{escape(line)}</p>" for line in lines if line)
     return OutgoingEmail(

@@ -579,6 +579,38 @@ def _propose_by_email(
     _thread_reply(gmail, store, message, text, person.name, command.task_id or "", "confirm")
 
 
+def _acceptance_reply(
+    gmail: GmailClient, services: Services, message: GmailMessage, sheet_url: str
+) -> bool:
+    """YES / NO in the thread of a "please accept" email (DESIGN section 23). False: not such a
+    reply, or not a yes/no (then it is handled as any other reply)."""
+    from app import acceptance
+    from app.commands import Command
+    from app.lifecycle import CommandContext, run_command
+
+    store = services.store
+    task_id = acceptance.thread_task(store, message.thread_id)
+    person = _staff_sender(store, message) if task_id else None
+    if person is None:
+        return False
+    task = next((t for t in store.tasks() if t.id == task_id), None)
+    if task is None or not acceptance.pending(task):
+        return False
+    answer = acceptance.answer_in(strip_noise(message.body_text) or message.body_text)
+    if answer is None:
+        return False
+    name, reason = answer
+    result = run_command(
+        Command(name, task_id, reason),  # type: ignore[arg-type]
+        CommandContext(store=store, gmail=gmail, actor=person, channel="Email",
+                       sheet_url=sheet_url, context_task_id=task_id, message_id=message.id),
+    )  # fmt: skip
+    _thread_reply(gmail, store, message, result.reply, person.name, task_id or "", "command")
+    _modify(gmail, message.id, [COMMAND_LABEL], [UNREAD, INBOX])
+    logger.info("acceptance_answer", extra={"task_id": task_id, "kind": name})
+    return True
+
+
 def _email_confirmation(
     gmail: GmailClient, services: Services, message: GmailMessage, sheet_url: str
 ) -> bool:
@@ -747,7 +779,8 @@ def _email_command(
     from app.commands import Command
     from app.lifecycle import CHANGES
 
-    if command.name in CHANGES:  # a typed change waits for YES (section 22, decision 2)
+    if command.name in CHANGES and command.name not in ("accept", "decline"):
+        # a typed change waits for YES (section 22, decision 2); accept/decline is the answer
         task_id = command.task_id or context
         _propose_by_email(gmail, store, message, person,
                           Command(command.name, task_id, command.value))  # fmt: skip
@@ -851,6 +884,9 @@ def process_inbox(
                 continue
             logged = [i for i in gmail.logged_message_ids(message.thread_id) if i != message.id]
             fresh = services.store.task_by_source_id(message.id) is None
+            if fresh and _acceptance_reply(gmail, services, message, sheet_url):
+                run.commands += 1  # YES / NO to "please accept" (section 23)
+                continue
             if fresh and _email_confirmation(gmail, services, message, sheet_url):
                 run.commands += 1  # YES / NO to a proposed change (section 22)
                 continue
