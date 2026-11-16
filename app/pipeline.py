@@ -33,6 +33,7 @@ from app.route import (
     match_staff_name,
     route,
     sender_assignment,
+    split_team,
     staff_mentioned,
     supporters_for,
 )
@@ -137,6 +138,13 @@ def rules_owner(
     if not asked.assign_to and not sender_prompt.wants_assignment(prompt):
         return OwnerChoice()
     if asked.assign_to:
+        parts = split_team(asked.assign_to)
+        if parts:  # "cia and enzo" (section 25): the first is the Doer, never the next one
+            person, corrected = staff_match(parts[0], staff)
+            if person is None:
+                return OwnerChoice(None, [f'PROMPT: "{parts[0]}" not found in Staff'])
+            note = [f'PROMPT: "{parts[0]}" read as {person.name}'] if corrected else []
+            return OwnerChoice(person.name, note)
         person, corrected = staff_match(asked.assign_to, staff)
         if person is not None:
             note = [f'PROMPT: "{asked.assign_to}" read as {person.name}'] if corrected else []
@@ -236,11 +244,22 @@ def decide_prompt(
         used_ai = True
 
     # Support (section 25): the others named together with the owner, by rules only.
-    support = (
-        supporters_for(sender_prompt.without_reviewer(prompt), owner, [reviewer or ""], staff)
-        if owner
-        else []
-    )
+    support: list[str] = []
+    parts = split_team(asked.assign_to) if asked.assign_to else None
+    if owner and parts:
+        for part in parts:  # the owner may be any of them when the AI chose (section 21)
+            helper, corrected = staff_match(part, staff)
+            if helper is None:
+                if part != parts[0]:  # the first one's flag comes from the owner rules
+                    flags.append(f'PROMPT: support "{part}" not found in Staff')
+            elif helper.name not in (owner, reviewer, *support):
+                support.append(helper.name)
+                if corrected:
+                    flags.append(f'PROMPT: support "{part}" read as {helper.name}')
+    elif owner:
+        support = supporters_for(
+            sender_prompt.without_reviewer(prompt), owner, [reviewer or ""], staff
+        )
 
     if used_ai:
         flags.insert(0, AI_READ_FLAG)

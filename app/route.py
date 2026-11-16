@@ -142,7 +142,20 @@ def staff_mentioned(text: str, staff: list[StaffMember]) -> list[StaffMember]:
     return found
 
 
-_JOINER = re.compile(r"^(?:,|,?\s*(?:and|dan|serta|sama|bersama|with|plus|&|\+)(?:\s+also)?)$")
+_JOINER = re.compile(r"^(?:,|,?\s*(?:and|dan|serta|sama|&)(?:\s+also)?)$")
+_TEAM_WORDS = re.compile(r"\s*(?:,|&|\band\b|\bdan\b|\bserta\b|\bsama\b)\s*", re.IGNORECASE)
+_POLITE = frozenset({"thanks", "thank you", "please", "pls", "ya", "tq", "makasih", "terima kasih",
+                     "tolong", "also", "too", "juga"})  # fmt: skip
+
+
+def split_team(names: str) -> list[str] | None:
+    """ "cia and enzo" → ["cia", "enzo"]; None for one name or alternatives ("ana or rina").
+    Polite words after a comma ("Staff D, thanks") are not names."""
+    if re.search(r"\b(?:or|atau)\b", names, re.IGNORECASE):
+        return None
+    parts = [p.strip(" .!") for p in _TEAM_WORDS.split(names) if p.strip(" .!")]
+    parts = [p for p in parts if p.casefold() not in _POLITE]
+    return parts if len(parts) > 1 else None
 
 
 def _first_span(normalised: str, phrase: str) -> tuple[int, int] | None:
@@ -155,8 +168,8 @@ def _first_span(normalised: str, phrase: str) -> tuple[int, int] | None:
 
 def joined_groups(text: str, staff: list[StaffMember]) -> list[list[StaffMember]]:
     """Staff named in `text`, in the order written, grouped where the names are joined by
-    "and", "dan", "&", "," or "sama" (DESIGN section 25): "cia and enzo" is one group of two,
-    "ana or rina" two groups of one (alternatives, not a team)."""
+    "and", "dan", "serta", "&", "," or "sama" (DESIGN section 25): "cia and enzo" is one
+    group of two, "ana or rina" two groups of one (alternatives, not a team)."""
     normalised = _normalise(text)
     firsts: dict[str, int] = {}
     for person in staff:
@@ -170,7 +183,7 @@ def joined_groups(text: str, staff: list[StaffMember]) -> list[list[StaffMember]
             span = _first_span(normalised, first)
         if span is not None:
             spans.append((span[0], span[1], person))
-    spans.sort(key=lambda item: item[0])
+    spans.sort(key=lambda item: (item[0], -(item[1] - item[0])))  # the longest name first
     groups: list[list[StaffMember]] = []
     end = -1
     for start, stop, person in spans:

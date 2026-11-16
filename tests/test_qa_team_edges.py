@@ -218,38 +218,22 @@ def test_the_ai_naming_the_second_person_keeps_the_first_as_support_and_flags_it
     assert any("owner unclear (rules read Staff P)" in f for f in decision.flags)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-C1: a typo in the first team name silently makes the supporter the Doer, unflagged",
-)
 def test_a_typo_in_the_first_team_name_does_not_silently_promote_the_supporter():
     decision = fixture_decide("assign to Staf P and Staff A")
     # Section 25: the first name is the Doer; section 21: a small typo is matched (and flagged).
     assert decision.owner == "Staff P" or any("Staf P" in flag for flag in decision.flags)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-C1: an ambiguous first name in a team silently makes the next name the Doer",
-)
 def test_an_ambiguous_first_name_in_a_team_does_not_silently_promote_the_next_name():
     decision = decide_prompt("assign to budi and ana", TODAY, TEAM, NullProvider())
     assert decision.owner != "Ana Putri" or any("budi" in f.casefold() for f in decision.flags)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-C2: joined_groups takes the shorter full name when one name starts another",
-)
 def test_a_full_name_that_contains_another_full_name_is_read_whole():
     groups = joined_groups("assign to rina wijaya sari and ana", TEAM)
     assert [[p.name for p in g] for g in groups] == [["Rina Wijaya Sari", "Ana Putri"]]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-C3: the whole 'A and <long name>' text is fuzzy-matched to the second person",
-)
 def test_a_team_with_a_long_second_name_keeps_the_first_name_as_doer():
     prompt = "assign to ana and wulan kusumawardhani pratiwi"
     decision = decide_prompt(prompt, TODAY, TEAM, NullProvider())
@@ -517,9 +501,6 @@ def test_a_team_with_an_intern_and_their_supervisor():
     assert (saved.owner, saved.doer, saved.support) == ("Staff A", "Staff B", "")
 
 
-@pytest.mark.xfail(
-    strict=True, reason="QA-C4: assign <id> to A and B puts the task's reviewer into Support"
-)
 def test_the_reviewer_is_never_support_when_the_manager_assigns_a_team():
     services, gmail = make()
     task = add(services, Reviewer="Staff D", **{"Needs review": "Yes"})
@@ -527,10 +508,6 @@ def test_the_reviewer_is_never_support_when_the_manager_assigns_a_team():
     assert "Staff D" not in current(services, task.id).supporters  # section 25
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-C4: reassigning a pending-acceptance task to a team puts the reviewer in Support",
-)
 def test_the_reviewer_is_never_support_on_a_reassign_for_acceptance():
     services, gmail = make()
     task = add(services, Status="Proposed", Acceptance="Pending", Reviewer="Staff D",

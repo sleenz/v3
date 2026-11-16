@@ -12,7 +12,6 @@ does not announce the same change a second time.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from html import escape
@@ -39,6 +38,7 @@ from app.route import (
     managers,
     match_staff_name,
     owner_and_doer,
+    split_team,
 )
 from app.sheets import SchemaError, SheetStore
 
@@ -748,7 +748,8 @@ def _reassign_for_acceptance(
     flags = "; ".join(f for f in task.flags if not f.startswith("Declined by"))
     changes: dict[str, Any] = {"Owner": owner, "Doer": doer, "Flag": flags}
     if helpers is not None:
-        changes["Support"] = "; ".join(h for h in helpers if h not in (owner, doer))
+        skip = (owner, doer, task.reviewer.strip())  # never the reviewer (QA-C4)
+        changes["Support"] = "; ".join(h for h in helpers if h not in skip)
     if doer.casefold() == actor.name.casefold():
         changes.update({"Acceptance": "Accepted", "Status": "Not Started"})
         _apply(ctx, task, "Delegated", changes)
@@ -895,11 +896,9 @@ def _assign(
     )
 
 
-_TEAM_SPLIT = re.compile(r"\s*(?:,|;|&|\+|\band\b|\bdan\b|\bserta\b|\bsama\b)\s*", re.I)
-
-
 def _names(value: str) -> list[str]:
-    return [part.strip() for part in _TEAM_SPLIT.split(value.strip()) if part.strip()]
+    """`cia and enzo` → two names; `Staff D, thanks` → one (section 25)."""
+    return split_team(value.replace(";", ",")) or [value.strip()]
 
 
 def _team(
@@ -907,7 +906,7 @@ def _team(
 ) -> tuple[StaffMember | None, list[str] | None, str]:
     """`cia and enzo` → (Cia, [Enzo], ""): the first is the Doer, the rest Support. One name →
     (person, None, ""): Support is left as it is. Unknown name → (None, None, why)."""
-    names = _names(value) or [value]
+    names = _names(value)
     people: list[StaffMember] = []
     for name in names:
         person = actor if is_me(name) else match_staff_name(name, staff)
@@ -932,7 +931,7 @@ def _assign_team(
     if target is None:
         return CommandResult(f"{problem} Nothing changed.", task.id)
     owner, doer = owner_and_doer(target, staff)
-    support = [h for h in helpers or [] if h not in (owner, doer)]
+    support = [h for h in helpers or [] if h not in (owner, doer, task.reviewer.strip())]
     changes: dict[str, Any] = {"Owner": owner, "Doer": doer, "Support": "; ".join(support)}
     _apply(ctx, task, "Delegated", changes, "assigned")
     helping = f", with {', '.join(support)} supporting" if support else ""
