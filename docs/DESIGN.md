@@ -924,8 +924,11 @@ A Manager's PROMPT counts as the manager's approval. The person named still has 
     `Accepted`.
   - Otherwise: Status `Proposed`, Acceptance `Pending`, and the acknowledgement says "waiting
     for <Doer> to accept".
-- **Asking.** The change job asks the Doer once, in working hours, and records the ask in
-  `_outbox` as kind `accept_ask`.
+- **Asking.** The change job asks the Doer once, in working hours. It records the ask in
+  `_outbox` as kind `accept_ask` (to find the thread) and sets Acceptance to `Asked`.
+  - Acceptance values: `Pending` (to ask), `Asked`, `Accepted`, `Declined`. Pending and Asked
+    both mean "waiting for the Doer".
+  - A reassign sets `Pending` again, so the new person, or the same person again, is asked.
   - WhatsApp, inside the 24-hour window: buttons **Terima** (`acc:<id>`) and **Tolak**
     (`dec:<id>`).
   - WhatsApp, outside the window: the template `grc_tugas_baru` with the same payloads.
@@ -963,6 +966,9 @@ A Manager's PROMPT counts as the manager's approval. The person named still has 
       person's "only open task" guess does not count here.
   - It is never read as an update when it is forwarded mail (a `Fwd:` subject, a header
     block or a "Forwarded message" line) or has a PROMPT line.
+  - It is not an update when it names two or more different tasks.
+  - A new email whose first line is a command (`G-0012 60`, `review G-0012 …`) follows the
+    same rules: forwards and PROMPTs stay requests, and NO logs it as a request.
   - Without a task ID, it is also never read as an update when it has attachments, the
     sender has no open tasks, or the AI is off.
   - If the AI says `request` or `unknown`, or the rules find nothing, the email is logged as a
@@ -972,6 +978,11 @@ A Manager's PROMPT counts as the manager's approval. The person named still has 
   - The confirmation adds: "Reply NO if this is a new request instead: it is then logged as
     one".
   - NO logs the original email as a request: row first, then acknowledgement and label.
+    "No, this is a new request" counts as NO.
+  - The question is removed only after its answer has been acted on, so a failure is retried
+    with the question still open.
+  - A YES or NO after the 30 minutes gets "that question expired, nothing changed". A late NO
+    to a new email still logs it as a request.
   - Until YES or NO, the original email stays in the inbox, read.
   - With the AI on, every new email from a Staff member with open tasks costs one extra reply
     read. Its text is masked as in section 22.
@@ -1002,6 +1013,11 @@ Master column `Support`, `; `-separated (a `,` is read too). The Sheet's existin
   - A PROMPT whose names are joined by *and / dan / & / , / sama / serta*: "assign this to Cia
     and Enzo". The first name is the Doer and the others are Support. This is read by rules
     only; the AI may still pick the owner.
+  - Each name is matched on its own, with the usual small typo allowed (and flagged). If the
+    first name can't be read (unknown, or a first name two people share), the owner is flagged
+    as not found. The next person is never moved up to Doer.
+  - *with*, *plus* and *bersama* do not join names ("with Staff D as reviewer" is a reviewer).
+    Polite words after a comma ("Staff D, thanks") are not names.
   - Names joined by *or / atau* are alternatives: nothing goes to Support, and the rules
     flag the owner as unclear, as before.
   - The reviewer, the Owner and the Doer are never Support.
