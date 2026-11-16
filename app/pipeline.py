@@ -29,10 +29,12 @@ from app.extract.clean import (
 from app.models import AuditEntry, Contact, RawRequest, StaffMember, Task, TaskResult
 from app.route import (
     fuzzy_staff_name,
+    joined_groups,
     match_staff_name,
     route,
     sender_assignment,
     staff_mentioned,
+    supporters_for,
 )
 from app.sheets import SheetStore
 
@@ -145,6 +147,13 @@ def rules_owner(
     ]
     if len(named) == 1:
         return OwnerChoice(named[0].name)
+    # "assign to cia and enzo" (section 25): one group of names joined by "and" is the Doer
+    # (the first) and Support; names joined by "or" stay unclear.
+    groups = joined_groups(sender_prompt.without_reviewer(prompt), staff)
+    teams = [[p for p in g if p != reviewer] for g in groups]
+    teams = [g for g in teams if len(g) >= 2]
+    if len(teams) == 1:
+        return OwnerChoice(teams[0][0].name)
     if asked.assign_to:
         return OwnerChoice(None, [f'PROMPT: "{asked.assign_to}" not found in Staff'])
     return OwnerChoice(None, ["PROMPT: couldn't read who to assign"])
@@ -161,6 +170,7 @@ class PromptDecision:
     reviewer: str | None = None
     due: date | None = None
     flags: list[str] = field(default_factory=list)
+    support: list[str] = field(default_factory=list)  # section 25: named with the owner
 
 
 def decide_prompt(
@@ -225,9 +235,16 @@ def decide_prompt(
         due = ai_due
         used_ai = True
 
+    # Support (section 25): the others named together with the owner, by rules only.
+    support = (
+        supporters_for(sender_prompt.without_reviewer(prompt), owner, [reviewer or ""], staff)
+        if owner
+        else []
+    )
+
     if used_ai:
         flags.insert(0, AI_READ_FLAG)
-    return PromptDecision(owner, reviewer, due, list(dict.fromkeys(flags)))
+    return PromptDecision(owner, reviewer, due, list(dict.fromkeys(flags)), support)
 
 
 def _staff_member(store: SheetStore, email: str) -> StaffMember | None:
@@ -443,6 +460,8 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
             status, acceptance = "Not Started", "Accepted"
         else:
             acceptance = "Pending"
+    team = {routed.owner or "", doer_name} if note and decision.owner else set()
+    support = [name for name in decision.support if name not in team] if team else []
     task = Task(
         title=title,
         catalog_id=routed.catalog_id or "",
@@ -450,6 +469,7 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
         requester=requester or "",
         owner=routed.owner or "",
         doer=routed.doer or routed.owner or "",
+        support="; ".join(support),
         letter_no=letter.letter_no if letter else "",
         letter_code=letter.letter_code if letter else "",
         start=raw.received_at.astimezone(clock.TZ).date(),

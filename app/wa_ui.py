@@ -176,6 +176,14 @@ def card_buttons(
         person.role == "Manager" or (reviewer is not None and reviewer.name == person.name)
     ):
         return [(tap_id("apv", task.id), "Approve"), (tap_id("ret", task.id), "Return")]
+    name = person.name.casefold()
+    doers = (task.doer.casefold(), task.owner.casefold())
+    if (
+        name not in doers
+        and person.role != "Manager"
+        and name in {s.casefold() for s in task.supporters}
+    ):  # section 25: Support updates progress; review and done are the Doer's
+        return [(tap_id("upd", task.id), "Update progres"), (tap_id("more", task.id), "Lainnya")]
     second = (
         (tap_id("rev", task.id), "Kirim review")
         if task.review_needed and task.status != "Approved"
@@ -189,7 +197,8 @@ def card_buttons(
 
 
 def my_tasks(person: StaffMember, tasks: list[Task], staff: list[StaffMember]) -> list[Task]:
-    """Open tasks the person is Doer or Owner of, or reviews (In Review); earliest due first."""
+    """Open tasks the person is Doer, Owner or Support of (section 25), or reviews (In
+    Review); earliest due first."""
     name = person.name.casefold()
     found = []
     for task in tasks:
@@ -201,7 +210,8 @@ def my_tasks(person: StaffMember, tasks: list[Task], staff: list[StaffMember]) -
             and reviewer is not None
             and (reviewer.name.casefold() == name)
         )
-        if name in (task.doer.casefold(), task.owner.casefold()) or reviews:
+        supports = name in {s.casefold() for s in task.supporters}
+        if name in (task.doer.casefold(), task.owner.casefold()) or reviews or supports:
             found.append(task)
     return sorted(found, key=lambda t: (t.due_date is None, t.due_date or date.max, t.id))
 

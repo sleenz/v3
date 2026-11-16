@@ -328,6 +328,13 @@ class Task(_SheetRow):
         return self.needs_review.strip().lower() in {"yes", "y", "ya", "true"}
 
     @property
+    def supporters(self) -> list[str]:
+        """`Support` names (section 25): `; `-separated (a `,` is read too), never the Doer."""
+        names = [part.strip() for part in re.split(r"[;,]", self.support) if part.strip()]
+        doer = self.doer.strip().casefold()
+        return list(dict.fromkeys(n for n in names if n.casefold() != doer))
+
+    @property
     def progress_value(self) -> float | None:
         """Progress as a fraction (0.5), from 0.5, 50 or "50%"; None when blank or unreadable."""
         text = self.progress.strip().rstrip("%").strip()

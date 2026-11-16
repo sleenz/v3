@@ -158,13 +158,14 @@ def morning_triggers(
 def due_today_triggers(
     tasks: Iterable[Task], staff: list[StaffMember], today: date, rule: str
 ) -> list[Trigger]:
-    """Tasks due today that are not Done: the Doer and the Owner; at last call also every
-    Manager."""
+    """Tasks due today that are not Done: the Doer, the Owner and Support (section 25); at last
+    call also every Manager."""
     triggers: list[Trigger] = []
     for task in _open(tasks):
         if task.due_date != today:
             continue
         people = [find_person(task.doer, staff), find_person(task.owner, staff)]
+        people += [find_person(name, staff) for name in task.supporters]
         if rule == LAST_CALL:
             people += managers(staff)
         seen: set[str] = set()
