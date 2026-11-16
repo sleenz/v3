@@ -691,11 +691,6 @@ def test_a_supporters_new_email_no_logs_the_request_even_when_the_reply_fails():
     assert current(services, task.id).progress_value is None
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-C5: a new email whose first line is a command: NO cancels, the email is never "
-    "logged as a request (section 24, D15)",
-)
 def test_a_new_email_with_a_bare_command_first_line_no_still_logs_it():
     services, gmail = make()
     task = add(services)

@@ -312,11 +312,6 @@ def test_yes_after_30_minutes_changes_nothing():
     assert task(ctx, first).progress_value == 0.4
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-B2: a YES after the 30-minute window gets no answer; it is silently put into "
-    "the task's Notes, so the person believes the change was made (DESIGN 22: 'the bot says so')",
-)
 def test_a_late_yes_is_told_that_the_proposal_expired():
     ctx = ai_ctx(intent="progress", progress=70)
     proposal(ctx)
@@ -357,11 +352,6 @@ def test_an_email_yes_does_not_confirm_a_whatsapp_proposal():
     assert task(ctx, first).progress_value == 0.4
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-B3: the confirmation shows the raw number ('→ 0.5%') but YES writes 50%; "
-    "before → after must show what the Sheet becomes (DESIGN 24)",
-)
 def test_decimal_progress_confirmation_matches_what_is_written():
     ctx = context()
     first = add(ctx, "ATMR report")
@@ -406,11 +396,6 @@ def test_no_logs_the_original_with_its_attachments():
     assert task(ctx, first).status == "In Progress"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-B4: if logging fails after NO, the proposal is already dropped and the "
-    "original is read; the retry treats NO as a plain reply and the request is never logged (D15)",
-)
 def test_a_failure_while_logging_after_no_never_loses_the_request(monkeypatch):
     import app.gmail as gmail_module
 
@@ -433,11 +418,6 @@ def test_a_failure_while_logging_after_no_never_loses_the_request(monkeypatch):
     assert [t.source_id for t in requests(ctx)] == ["m-1"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-B5: 'No, this is a new request' (the confirmation's own wording) is not read "
-    "as NO (over 4 words); the proposal is dropped and the original is never logged (DESIGN 24)",
-)
 def test_no_with_the_words_of_the_confirmation_logs_the_request():
     ctx = ai_ctx(intent="progress", progress=70)
     proposal(ctx)
@@ -558,11 +538,6 @@ def test_a_task_id_from_someone_not_in_staff_is_a_request():
     assert len(requests(ctx)) == 1 and task(ctx, first).progress_value == 0.4
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-B6: an email naming two tasks is not 'about one task' (DESIGN 24), yet the "
-    "first ID wins over the AI's task and progress meant for G-0002 is proposed on G-0001",
-)
 def test_an_email_about_two_tasks_does_not_update_the_wrong_one():
     ctx = ai_ctx(intent="progress", progress=50, task_id="G-0002")
     first = add(ctx, "ATMR report")
@@ -571,12 +546,6 @@ def test_an_email_about_two_tasks_does_not_update_the_wrong_one():
     assert f"Progress {first}" not in last_reply(ctx)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-B1: a new email whose first line looks like a command with an ID (here the "
-    "Manager's 'Review G-0001 again with …') skips DESIGN 24: no 'Reply NO if this is a new "
-    "request', archived at once, and NO only cancels, so the request is never logged",
-)
 def test_a_new_email_starting_with_a_command_word_keeps_the_request_path():
     ctx = context()
     first = add(ctx, "ATMR report")
@@ -587,11 +556,6 @@ def test_a_new_email_starting_with_a_command_word_keeps_the_request_path():
     assert [t.source_id for t in requests(ctx)] == ["m-1"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-B1: forwarded mail is never an update (DESIGN 24), but a forward whose top "
-    "line is 'review G-0001 …' is proposed as a review and archived instead of being logged",
-)
 def test_a_forward_with_a_command_like_top_line_is_a_request():
     ctx = context()
     first = add(ctx, "ATMR report")
@@ -819,11 +783,6 @@ def test_whatsapp_duplicate_tap_is_applied_once():
     assert task(ctx, first).progress_value == 0.9
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-B7: a re-delivered typed 'ya' (same wamid) is not deduped and confirms a "
-    "newer, different proposal the person never agreed to (DESIGN 22: deduped by message id)",
-)
 def test_whatsapp_duplicate_ya_does_not_confirm_a_newer_proposal():
     ctx = context()
     first = add(ctx, "ATMR report")

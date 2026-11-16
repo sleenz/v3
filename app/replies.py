@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Literal
 
-from app.commands import Command, parse_command, task_id_in
+from app.commands import Command, parse_command, progress_fraction, task_id_in
 from app.extract.ai import AIProvider
 from app.extract.clean import mask_text
 from app.extract.reply import ReplyReading, TaskLine, read_reply
@@ -220,7 +220,8 @@ def describe(command: Command, task: Task | None, files: list[str] | None = None
         return f"Status {tid}: {to}"
 
     if command.name == "progress":
-        number = value.rstrip("%")
+        fraction = progress_fraction(value)  # what YES writes: "0.5" is 50% (QA-B3)
+        number = f"{round(fraction * 100)}" if fraction is not None else value.rstrip("%")
         if task is None:
             return f"Progress {tid} → {number}%"
         line = f"Progress {tid}: {_pct(task)}% → {number}%"
@@ -322,6 +323,23 @@ def pending_confirm(
     )
 
 
+def expired_confirm(
+    store: SheetStore, person: str, channel: Channel, now: datetime
+) -> Conversation | None:
+    """The person's confirmation on this channel that ran out in the last day (QA-B2)."""
+    return next(
+        (
+            r
+            for r in _rows(store)
+            if r.person.casefold() == person.casefold()
+            and r.channel == channel
+            and r.pending_action == "confirm"
+            and now - timedelta(days=1) < r.expires_at <= now
+        ),
+        None,
+    )
+
+
 def drop_confirm(store: SheetStore, person: str) -> None:
     rows = _rows(store)
     keep = [
@@ -349,5 +367,12 @@ def is_yes(text: str) -> bool:
     return _short_answer(text, YES_WORDS)
 
 
+_NEW_REQUEST_NO = re.compile(
+    r"^\W*(?:no|tidak|bukan|nggak|gak)\b.{0,40}\b(?:new request|request baru|permintaan baru)\b",
+    re.IGNORECASE,
+)
+
+
 def is_no(text: str) -> bool:
-    return _short_answer(text, NO_WORDS)
+    """`no`, `Batal.`, and the confirmation's own words "No, this is a new request" (QA-B5)."""
+    return _short_answer(text, NO_WORDS) or bool(_NEW_REQUEST_NO.match(text.strip()))

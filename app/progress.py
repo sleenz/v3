@@ -103,8 +103,11 @@ def log_note(
 
 
 def already_processed(store: SheetStore, message_id: str) -> bool:
-    """Meta and Gmail can deliver a message twice: a change is applied once per message id."""
-    return bool(message_id) and any(row.message_id == message_id for row in rows(store))
+    """Meta and Gmail can deliver a message twice: a change is applied once per message id.
+    A confirmed change is logged as "<proposal id> <answer id>", so a re-delivered "ya" is
+    caught too (QA-B7)."""
+    wanted = set(message_id.split())
+    return bool(wanted) and any(wanted & set(row.message_id.split()) for row in rows(store))
 
 
 def last_change(

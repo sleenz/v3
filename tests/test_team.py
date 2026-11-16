@@ -106,8 +106,9 @@ def add(services, **values) -> Task:
 
 def run(services, gmail, name: str, command: Command):
     services.store.load()
+    message_id = f"msg-{name.replace(' ', '')}-{command.name}"  # real ids have no spaces
     ctx = CommandContext(store=services.store, gmail=gmail, actor=person(services.store, name),
-                         channel="Email", message_id=f"msg-{name}-{command.name}")  # fmt: skip
+                         channel="Email", message_id=message_id)  # fmt: skip
     result = run_command(command, ctx)
     services.store.load()
     return result

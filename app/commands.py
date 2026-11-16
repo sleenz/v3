@@ -82,6 +82,12 @@ def task_id_in(text: str) -> str | None:
     return f"G-{int(match.group(1)):04d}" if match else None
 
 
+def task_ids_in(text: str) -> list[str]:
+    """Every task ID in `text`, in order, without repeats."""
+    found = (f"G-{int(m.group(1)):04d}" for m in _TASK_ID.finditer(text or ""))
+    return list(dict.fromkeys(found))
+
+
 def is_me(name: str) -> bool:
     return name.strip().casefold() in _ME
 
