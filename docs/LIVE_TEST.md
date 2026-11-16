@@ -124,13 +124,13 @@ Config `AI provider` = `Gemini API key`. Use a test task you own (O1–O6 on Wha
 
 | # | Do this | Expected |
 |---|---------|----------|
-| O1 | Reply to a task card: "udah 70% tinggal nunggu data finance". | "Progress G-… → 70% Benar?" with Ya / Ubah / Batal. Nothing changes until **Ya**; then Progress 70 %. Log line `ai_reply_call` with `prompt_version` reply_v1, a confidence and `fallback` false (no text). |
+| O1 | Reply to a task card: "udah 70% tinggal nunggu data finance". | "Progress G-…: <now>% → 70% Benar?" with Ya / Ubah / Batal. Nothing changes until **Ya**; then Progress 70 %. Log line `ai_reply_call` with `prompt_version` reply_v1, a confidence and `fallback` false (no text). |
 | O2 | "minta mundur ke 20 Nov", then **Batal**. | Nothing changes; no ProgressLog row. |
 | O3 | "kapan deadline G-…?" | The due date, status and progress straight from the sheet; no buttons. |
 | O4 | With two open tasks: "udah setengah jalan" (not a reply to anything). | A list "Tugas yang mana?" of your tasks. |
 | O5 | Paste a new request text (not a reply, not forwarded). | Logged as a new request 30 s later (Gemini said `request`). |
-| O6 | Set `AI provider` to `Off`; send `G-… 40`. | Still "Progress G-… → 40% Benar?" (the rules took over). Set it back. |
-| O7 | Reply to a reminder email: "still stuck, waiting for finance". Then reply `YES`. | First an email "Reply YES to confirm … terhambat (On Hold)"; after YES, Status On Hold. |
+| O6 | Set `AI provider` to `Off`; send `G-… 40`. | Still "Progress G-…: <now>% → 40% Benar?" (the rules took over). Set it back. |
+| O7 | Reply to a reminder email: "still stuck, waiting for finance". Then reply `YES`. | First an email "Reply YES to confirm … Status G-…: In Progress → On Hold (terhambat)"; after YES, Status On Hold. |
 
 ## Accepting an assignment (DESIGN section 23)
 
@@ -146,3 +146,16 @@ Needs the `Acceptance` column in Master. A1–A5 use email. A6–A7 need WhatsAp
 | A5 | From M, reply `assign G-… to <another person>`, then `YES`. | Acceptance Pending again, the flag is gone, and the new person gets "please accept". |
 | A6 | Repeat A1 with S on WhatsApp. | S gets the Terima / Tolak buttons (or the template, if S has not written in 24 h). **Terima** → Not Started. |
 | A7 | Repeat A1, then tap **Tolak**. | The bot asks why; type a reason. You see the same result as A4, and the Manager is told. |
+
+## Updates by any email and status (DESIGN section 24)
+
+Use a test task you are the Doer of (call it G-x). U3 and U4 need `AI provider` = Gemini.
+
+| # | Do this | Expected |
+|---|---------|----------|
+| U1 | Send a **new** email to the bot (not a reply): `status G-x`. | The reply has the due date and days left, status, progress and Doer. Nothing changes. |
+| U2 | New email: `G-x 60`. | "Reply YES to confirm: Progress G-x: <now>% → 60%". After **YES**, Progress is 60 %. |
+| U3 | New email, no ID: "the <task title> is almost done, 90%". | The same confirmation for 90 %, with "Reply NO if this is a new request instead". Your email stays in the inbox until you answer. |
+| U4 | Repeat U3, then reply **NO**. | "Logged your email as a new request: G-…": a new row, and G-x is unchanged. |
+| U5 | Forward any email to the bot with "G-x" in it. | Logged as a new request, never read as an update. |
+| U6 | On WhatsApp: `how is G-x?` | The same status text as U1. |

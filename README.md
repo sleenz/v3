@@ -271,6 +271,13 @@ Replaces the 09:00 digest and the old daily WhatsApp reminder.
       - Tell the team: when the Manager assigns you a task, you get "please accept". Reply
         **YES** (or tap **Terima**) to take it; the files follow. Reply **NO** and the reason
         (or tap **Tolak**), and the Manager reassigns it with `assign G-… to <name>`.
+- [ ] Updates by any email (DESIGN section 24), no setup needed. Tell the team:
+      - They can email the bot a new message about a task, e.g. "G-0012 is at 70%, waiting
+        for finance". With Gemini on, the task ID can be left out: "the stress test report is
+        half done".
+      - The bot shows the change as before → after and asks for YES. If it was really a new
+        request, they reply NO and it is logged as one.
+      - `status G-0012` (or "how is G-0012?") answers from the sheet, by email or WhatsApp.
 - [ ] Tell the team how to update a task (DESIGN section 22):
       - WhatsApp: tap **Lihat tugas** in a reminder → one card per task with **Update progres**
         (25–100 %), **Selesai** or **Kirim review**, **Lainnya** (Selesai, Terhambat, Minta

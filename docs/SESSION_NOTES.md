@@ -105,7 +105,7 @@ The user asked for four things, built in four phases, one PR each:
 1. **Phase 1 (built, DESIGN section 23):** accepting an assignment. It applies only to a
    Manager's PROMPT. The Doer is asked Yes/No. Yes → Not Started and the files follow. No →
    back to the Manager.
-2. **Phase 2:** updates by any email to the bot (not only replies), `status G-0012`, and
+2. **Phase 2 (built, DESIGN section 24):** updates by any email to the bot (not only replies), `status G-0012`, and
    confirmations that show before → after.
 3. **Phase 3:** multi-person tasks: one Doer plus a `Support` column (`;`-separated). In a
    PROMPT, the first name is the Doer and the rest are Support. Supporters are cc'd and can

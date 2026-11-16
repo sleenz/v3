@@ -951,3 +951,43 @@ A Manager's PROMPT counts as the manager's approval. The person named still has 
     your answer".
   - The manager summary has a section "Waiting for acceptance". The WhatsApp summary template
     keeps its five numbers.
+
+## 24. Updates by any email, status, before → after (v1.5 phase 2; approved 16 Nov 2026)
+
+- **A new email can be an update.** Before this, only replies in a bot thread were read as
+  updates. Now a new email (not a reply) from a Staff member can be one too.
+  - It is read the same way: the AI first, the rules as the fallback.
+  - It counts as an update only when it is about one task:
+    - a task ID that exists, in the subject or the body; or
+    - with the AI on and no ID typed: the AI names one of the sender's own open tasks. The
+      person's "only open task" guess does not count here.
+  - It is never read as an update when it is forwarded mail (a `Fwd:` subject, a header
+    block or a "Forwarded message" line) or has a PROMPT line.
+  - Without a task ID, it is also never read as an update when it has attachments, the
+    sender has no open tasks, or the AI is off.
+  - If the AI says `request` or `unknown`, or the rules find nothing, the email is logged as a
+    request exactly as before.
+  - Questions such as "When is G-0012 due?" are answered from the Sheet.
+- **Nothing is lost (D15).** A change from a new email waits for YES like any typed change.
+  - The confirmation adds: "Reply NO if this is a new request instead: it is then logged as
+    one".
+  - NO logs the original email as a request: row first, then acknowledgement and label.
+  - Until YES or NO, the original email stays in the inbox, read.
+  - With the AI on, every new email from a Staff member with open tasks costs one extra reply
+    read. Its text is masked as in section 22.
+- **`status G-0012`.** Also `how is G-0012`, `gimana G-0012`, `cek status G-0012`, or
+  `status` alone in reply to a message about one task. It works on WhatsApp and by email,
+  for any Staff member and any status.
+  - The answer comes from the Sheet: due date and days left, status, progress, Doer and
+    reviewer.
+  - When they apply, it adds: waiting for acceptance or manager approval, the last "Blocked …"
+    note, the review notes, the flags and the last update.
+  - "kapan deadline G-0012?" (an AI `question`) gets the same text.
+- **Before → after.** The confirmation line shows what the Sheet holds now and what it
+  becomes:
+  - `Progress G-0012: 40% → 70%`; with `(status → In Progress)` added when the task is Not
+    Started.
+  - `Status G-0012: In Progress → On Hold (terhambat): …`
+  - `Minta G-0012 due 20 Nov 2026 → 27 Nov 2026`
+  - `Serahkan G-0012: doer Staff A → Staff P`
+  - The same pattern for review, done, approve and return.
