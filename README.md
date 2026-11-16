@@ -10,6 +10,9 @@ Global Financial Services, Hong Kong.
 
 ## How it works
 
+Step-by-step diagrams of the six phases (intake → logging → approval → reminders → updates →
+review and done): [`docs/FLOW.md`](docs/FLOW.md).
+
 ```
 Email to the bot mailbox ─┐                         ┌─> Master row (status Proposed) + AuditLog
  (allowed senders only)   ├─> process_request() ────┤   + reply to the sender in the thread
