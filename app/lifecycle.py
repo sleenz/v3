@@ -414,7 +414,6 @@ CHANGES = frozenset({"progress", "review", "done", "approve", "return", "assign"
                      "extension", "extension_ok", "extension_no", "snooze", "undo",
                      "note", "accept", "decline"})  # fmt: skip
 ANSWERS = frozenset({"accept", "decline"})  # the answer is the confirmation (section 23)
-PENDING = "pending"
 
 
 def run_command(command: Command, ctx: CommandContext) -> CommandResult:
@@ -503,7 +502,7 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
     if (
         command.name == "assign"
         and task.status == "Proposed"
-        and (task.acceptance.strip().lower() in (PENDING, "declined"))
+        and (task.awaiting_acceptance or task.acceptance.strip().lower() == "declined")
     ):
         return _reassign_for_acceptance(command, task, ctx, staff)
 
@@ -692,7 +691,7 @@ def task_status(task: Task, staff: list[StaffMember], today: date) -> str:
         f"{task.id} – {task.title}: {due}, status {task.status}, progress {pct}%"
         f", doer {task.doer or '-'}{support}{review}."
     ]
-    if task.status == "Proposed" and task.acceptance.strip().lower() == PENDING:
+    if task.awaiting_acceptance:
         lines.append(f"Waiting for {task.doer or 'the Doer'} to accept.")
     elif task.status == "Proposed":
         lines.append("Waiting for the manager's approval.")
@@ -714,7 +713,7 @@ def _answer_assignment(command: Command, task: Task, ctx: CommandContext) -> Com
     Accept: Status Not Started, so the change job emails the assignment with the files.
     Decline: the task stays Proposed for the Manager, flagged with the reason."""
     actor = ctx.actor
-    if task.acceptance.strip().lower() != PENDING:
+    if not task.awaiting_acceptance:  # also a task closed in the Sheet meanwhile (QA-A2)
         return CommandResult(f"{task.id} is not waiting for your answer.", task.id)
     if actor.name.casefold() != task.doer.strip().casefold():
         return CommandResult(f"Only {task.doer or 'the Doer'} can answer for {task.id}.", task.id)

@@ -55,7 +55,7 @@ class Services:
 
 def next_step(task: Task) -> str:
     """What happens next, for the reply to the sender."""
-    if task.acceptance.strip().lower() == "pending":
+    if task.awaiting_acceptance:
         return f"Assigned by the manager; waiting for {task.doer} to accept."
     if task.status != "Proposed":
         return f"Assigned by the manager to {task.doer}; started."

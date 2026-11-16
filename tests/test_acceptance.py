@@ -188,7 +188,7 @@ def test_only_the_doer_can_answer():
     task, thread = asked(services, gmail)
     reply(gmail, "a3", thread, "Yes", sender="staff.a@example.com")
     process_inbox(gmail, services)
-    assert task_now(services, task.id).acceptance == "Pending"
+    assert task_now(services, task.id).acceptance == "Asked"  # asked, still waiting
 
 
 def test_a_typed_accept_command_anywhere():
@@ -264,3 +264,12 @@ def test_an_unanswered_assignment_is_in_the_morning_message_and_the_manager_summ
     assert mine and "waiting for your answer" in mine[0].text and task.id in mine[0].text
     [summary] = [e for e in emails_to(gmail, "staff.k@example.com") if "Team summary" in e.subject]
     assert "Waiting for acceptance (1)" in summary.text
+
+
+def test_an_unclear_answer_in_the_ask_thread_gets_a_hint_not_silence():
+    services, gmail = setup()
+    task, thread = asked(services, gmail)
+    reply(gmail, "a4", thread, "Ya, tapi minggu depan baru bisa mulai")
+    process_inbox(gmail, services)
+    assert task_now(services, task.id).acceptance == "Asked"
+    assert "Reply YES to accept" in gmail.replies[-1][1].text

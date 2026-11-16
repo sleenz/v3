@@ -196,7 +196,7 @@ def test_intern_under_a_full_timer_is_doer_and_asked_owner_is_cc_after_yes():
     # the Owner (supervisor) cannot answer for the intern
     owner_try = cmd(services, gmail, "Staff A", f"accept {task.id}")
     assert "Only Staff B" in owner_try.reply
-    assert task_now(services, task.id).acceptance == "Pending"
+    assert task_now(services, task.id).acceptance == "Asked"
     reply(gmail, "b-yes", ask_thread(services, "Staff B"), "Ya, siap", "staff.b@example.com")
     process_inbox(gmail, services)
     assert task_now(services, task.id).status == "Not Started"
@@ -314,14 +314,10 @@ def test_reassign_while_pending_asks_the_new_doer_once_and_ignores_the_old_doers
     reply(gmail, "p-late", old_thread, "Yes")
     process_inbox(gmail, services)
     saved = task_now(services, task.id)
-    assert (saved.doer, saved.status, saved.acceptance) == ("Staff A", "Proposed", "Pending")
+    assert (saved.doer, saved.status, saved.acceptance) == ("Staff A", "Proposed", "Asked")
     assert "Only Staff A" in gmail.replies[-1][1].text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-A1: a Doer asked earlier is never asked again after A -> B -> A reassignment",
-)
 def test_reassign_back_to_an_earlier_doer_asks_them_again():
     services, gmail = setup()
     task, _ = asked_by_email(services, gmail)  # Staff P asked
@@ -358,10 +354,6 @@ def test_a_paused_doer_is_asked_only_after_resume():
     assert changes(services, gmail).asked == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-A8: with no _outbox tab the Doer is asked again on every change run",
-)
 def test_without_the_outbox_tab_the_doer_is_still_asked_once():
     services, gmail = setup()
     del services.store.backend.tabs["_outbox"]
@@ -387,10 +379,6 @@ def test_accept_twice_says_not_waiting_and_sends_one_assignment():
 
 
 @pytest.mark.parametrize("status", ["Cancelled", "Done"])
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-A2: accept on a Cancelled/Done task whose Acceptance is still Pending reopens it",
-)
 def test_accept_on_a_closed_task_changes_nothing(status):
     services, gmail = setup()
     task, _ = asked_by_email(services, gmail)
@@ -426,7 +414,7 @@ def test_a_stranger_cannot_decline():
     task, _ = asked_by_email(services, gmail)
     result = cmd(services, gmail, "Staff D", f"decline {task.id} bukan tugas saya")
     assert "Only Staff P" in result.reply
-    assert task_now(services, task.id).acceptance == "Pending"
+    assert task_now(services, task.id).acceptance == "Asked"
 
 
 def test_even_the_manager_cannot_accept_for_the_doer():
@@ -514,7 +502,7 @@ def test_terima_kasih_in_the_ask_thread_is_not_an_accept():
     task, thread = asked_by_email(services, gmail)
     reply(gmail, "tk", thread, "Terima kasih")
     process_inbox(gmail, services)
-    assert task_now(services, task.id).acceptance == "Pending"
+    assert task_now(services, task.id).acceptance == "Asked"
 
 
 def test_terima_kasih_with_the_id_is_not_an_accept():
@@ -526,10 +514,6 @@ def test_terima_kasih_with_the_id_is_not_an_accept():
     assert task_now(services, task.id).acceptance == "Pending"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-A7: a five-word YES ('Yes, I will take it') is not an accept; it only goes to Notes",
-)
 def test_a_natural_yes_sentence_in_the_ask_thread_accepts():
     services, gmail = setup()
     task, thread = asked_by_email(services, gmail)
@@ -538,10 +522,6 @@ def test_a_natural_yes_sentence_in_the_ask_thread_accepts():
     assert task_now(services, task.id).status == "Not Started"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-A3: an email NO whose reason is on the next line is saved as 'no reason given'",
-)
 def test_email_no_with_the_reason_on_the_next_line_keeps_the_reason():
     services, gmail = setup()
     task, thread = asked_by_email(services, gmail)
@@ -552,10 +532,6 @@ def test_email_no_with_the_reason_on_the_next_line_keeps_the_reason():
     assert any("on leave" in f for f in saved.flags)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-A4: a reply starting 'Maaf'/'Sorry' that then says yes is read as a decline",
-)
 def test_a_polite_yes_starting_with_maaf_is_not_a_decline():
     services, gmail = setup()
     task, thread = asked_by_email(services, gmail)
@@ -583,7 +559,7 @@ def test_terima_kasih_on_whatsapp_in_reply_to_the_ask_is_not_an_accept():
     changes(services, gmail, ctx.wa)
     ask_id = ask_rows(services, "Staff P")[-1].message_id
     handle_message(wa_text("Terima kasih", context_id=ask_id), ctx)
-    assert task_now(services, task.id).acceptance == "Pending"
+    assert task_now(services, task.id).acceptance == "Asked"
 
 
 @pytest.mark.xfail(

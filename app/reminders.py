@@ -148,7 +148,7 @@ def morning_triggers(
             if reviewer is not None:
                 triggers.append(Trigger(REVIEW_WAITING, task.id, reviewer.name))
     for task in tasks:  # section 23: a Manager's assignment not answered yet
-        if task.id and task.status == "Proposed" and task.acceptance.strip().lower() == "pending":
+        if task.id and task.awaiting_acceptance:
             doer = find_person(task.doer, staff)
             if doer is not None:
                 triggers.append(Trigger(ACCEPT_WAITING, task.id, doer.name))
@@ -198,11 +198,7 @@ def manager_sections(tasks: Iterable[Task], today: date) -> list[tuple[str, list
         ("Blocked", [t for t in current if t.status == "On Hold"]),
         (
             "Waiting for acceptance",
-            [
-                t
-                for t in every
-                if t.status == "Proposed" and t.acceptance.strip().lower() == "pending"
-            ],
+            [t for t in every if t.awaiting_acceptance],
         ),
     ]
 

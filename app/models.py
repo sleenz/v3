@@ -312,7 +312,8 @@ class Task(_SheetRow):
     review_notes: str = Field(default="", alias="Review notes")
     reminder_profile: str = Field(default="", alias="Reminder profile")
     review_file: str = Field(default="", alias="Review file")
-    # Assignment acceptance (DESIGN section 23): Pending / Accepted / Declined; blank = not asked.
+    # Assignment acceptance (DESIGN section 23): Pending (to ask) / Asked / Accepted / Declined;
+    # blank = no acceptance needed.
     acceptance: str = Field(default="", alias="Acceptance")
 
     _dates = field_validator("start", "due_date", "submitted_date", "last_updated", mode="before")(
@@ -326,6 +327,11 @@ class Task(_SheetRow):
     @property
     def review_needed(self) -> bool:
         return self.needs_review.strip().lower() in {"yes", "y", "ya", "true"}
+
+    @property
+    def awaiting_acceptance(self) -> bool:
+        """A Manager's assignment the Doer has not answered yet (section 23)."""
+        return self.status == "Proposed" and self.acceptance.strip().lower() in {"pending", "asked"}
 
     @property
     def supporters(self) -> list[str]:

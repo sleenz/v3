@@ -27,21 +27,28 @@ logger = logging.getLogger("grc.acceptance")
 
 ASK_KIND = "accept_ask"
 TEMPLATE_ASK = "grc_tugas_baru"
-NO_WORDS = frozenset({"no", "tidak", "nggak", "gak", "ga", "tolak", "decline", "cannot", "can't",
-                      "cant", "sorry", "maaf"})  # fmt: skip
+
+
+ASKED = "Asked"
 
 
 def pending(task: Task) -> bool:
-    return task.status == "Proposed" and task.acceptance.strip().lower() == "pending"
+    """Waiting for the Doer's answer: Acceptance `Pending` (not asked yet) or `Asked`."""
+    return task.awaiting_acceptance
 
 
 def asked(store: SheetStore, task: Task) -> bool:
-    """The current Doer was already asked about this task (a reassignment asks again)."""
-    doer = task.doer.strip().casefold()
-    return any(
-        row.kind == ASK_KIND and task.id in row.tasks and row.person.casefold() == doer
-        for row in outbox.rows(store)
-    )
+    """The current Doer was asked: the change job writes Acceptance `Asked` after the ask.
+    A reassignment writes `Pending` again, so the new (or the same) person is asked again."""
+    return task.acceptance.strip().lower() == ASKED.lower()
+
+
+def _mark_asked(store: SheetStore, task: Task) -> None:
+    try:
+        store.update_task(task.id, {"Acceptance": ASKED})
+    except Exception as error:  # the next run asks again rather than never
+        logger.error("accept_mark_failed", extra={"task_id": task.id,
+                                                  "error_type": type(error).__name__})  # fmt: skip
 
 
 def _due(task: Task) -> str:
@@ -95,6 +102,7 @@ def ask(store: SheetStore, gmail: Any, wa: Any, task: Task, sheet_url: str) -> b
                     person.wa_id, TEMPLATE_ASK, TEMPLATE_LANGUAGE, params, payloads
                 )
             outbox.record(store, "WhatsApp", message_id, person.name, [task.id], ASK_KIND)
+            _mark_asked(store, task)
             return True
         except Exception as error:
             kind = type(error).__name__
@@ -104,24 +112,47 @@ def ask(store: SheetStore, gmail: Any, wa: Any, task: Task, sheet_url: str) -> b
     sent = gmail.send(ask_email(task, person, sheet_url), store.config().sender_name)
     if sent is not None:
         outbox.record(store, "Email", sent.id, person.name, [task.id], ASK_KIND, sent.thread_id)
+    _mark_asked(store, task)
     return True
 
 
-def answer_in(text: str) -> tuple[str, str] | None:
-    """("accept", "") or ("decline", reason) from the first line of a reply; None otherwise.
-    "Yes", "ya, siap", "ok" accept; "No, I am on leave" declines with the rest as the reason."""
-    from app.replies import is_yes
+_APOLOGY = re.compile(r"^(?:sorry|maaf)\b[^.!,;]*[.!,;]+\s*", re.I)  # "Maaf baru balas. "
+_ACCEPT = re.compile(
+    r"^(?:yes|ya|iya|y|ok|oke|okay|siap|sure|baik|boleh|accept(?:ed)?|setuju|"
+    r"terima(?!\s+kasih))\b",
+    re.I,
+)
+_NOT_PLAIN = re.compile(r"\b(?:but|tapi|namun|not|tidak|gak|nggak|can't|cannot)\b", re.I)
+_DECLINE = re.compile(
+    r"^(?:no|tidak|nggak|gak|ga|tolak|decline|cannot|can't|cant|"
+    r"i\s+(?:can't|cannot|can\s+not)|saya\s+(?:tidak|gak|nggak)\s+bisa|not\s+able)\b"
+    r"(?:\s+(?:bisa|can|do\s+it|take\s+it))?\W*",
+    re.I,
+)
 
-    first = next((line.strip() for line in text.splitlines() if line.strip()), "")
-    if not first:
+
+def answer_in(text: str) -> tuple[str, str] | None:
+    """("accept", "") or ("decline", reason) from a reply to "please accept"; None when it is
+    neither. "Yes, I will take it", "Siap" accept ("terima kasih" does not); "No, I am on leave"
+    declines with the rest as the reason, which may also be on the next lines. A leading
+    apology ("Maaf baru balas.") is skipped; a yes with "but" / "tapi" is not a plain yes."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
         return None
-    if is_yes(first):
+    first = lines[0]
+    if _APOLOGY.match(first) and len(_APOLOGY.sub("", first, count=1)) > 0:
+        first = _APOLOGY.sub("", first, count=1)
+    elif re.fullmatch(r"(?:sorry|maaf)\W*", first, re.I) and len(lines) > 1:
+        first, lines = lines[1], lines[1:]
+    if _ACCEPT.match(first) and not _NOT_PLAIN.search(first):
         return ("accept", "")
-    words = re.findall(r"[a-z']+", first.lower())
-    if words and words[0] in NO_WORDS:
-        reason = re.sub(r"^\W*[\w']+\W*", "", first, count=1)
-        reason = re.sub(r"^(?:bisa|can|thanks|thank you|sorry|maaf)\b\W*", "", reason, flags=re.I)
-        return ("decline", reason.strip())
+    found = _DECLINE.match(first)
+    if found:
+        reason = first[found.end() :].strip()
+        if not reason:
+            reason = " ".join(lines[1:3]).strip()
+        reason = re.sub(r"^(?:thanks|thank you|sorry|maaf)\b\W*", "", reason, flags=re.I)
+        return ("decline", reason.strip()[:300])
     return None
 
 

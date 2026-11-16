@@ -555,7 +555,7 @@ def test_team_prompt_by_the_manager_asks_only_the_doer_and_support_cannot_answer
     gmail.add("yes-a", thread_id=str(thread).lstrip("'"), sender_email="staff.a@example.com",
               subject="Re: please accept", body_text="YES")  # fmt: skip
     process_inbox(gmail, services)
-    assert current(services, task.id).acceptance == "Pending"
+    assert current(services, task.id).acceptance == "Asked"
     accept = run(services, gmail, "Staff A", Command("accept", task.id))
     assert not accept.changed and "Only Staff P" in accept.reply
     assert run(services, gmail, "Staff P", Command("accept", task.id)).changed

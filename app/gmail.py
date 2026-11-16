@@ -608,6 +608,12 @@ def _acceptance_reply(
     if task is None or not acceptance.pending(task):
         return False
     answer = acceptance.answer_in(strip_noise(message.body_text) or message.body_text)
+    if answer is None and person.name.casefold() == task.doer.strip().casefold():
+        hint = (f"I couldn't tell if that is a yes or a no. Reply YES to accept {task_id}, or "
+                "NO and the reason if you cannot take it.")  # fmt: skip
+        _thread_reply(gmail, store, message, hint, person.name, task_id or "", "reply")
+        _modify(gmail, message.id, [REPLY_LABEL], [UNREAD, INBOX])
+        return True
     if answer is None:
         return False
     name, reason = answer
