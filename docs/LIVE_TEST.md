@@ -131,3 +131,18 @@ Config `AI provider` = `Gemini API key`. Use a test task you own (O1–O6 on Wha
 | O5 | Paste a new request text (not a reply, not forwarded). | Logged as a new request 30 s later (Gemini said `request`). |
 | O6 | Set `AI provider` to `Off`; send `G-… 40`. | Still "Progress G-… → 40% Benar?" (the rules took over). Set it back. |
 | O7 | Reply to a reminder email: "still stuck, waiting for finance". Then reply `YES`. | First an email "Reply YES to confirm … terhambat (On Hold)"; after YES, Status On Hold. |
+
+## Accepting an assignment (DESIGN section 23)
+
+Needs the `Acceptance` column in Master. A1–A5 use email. A6–A7 need WhatsApp live and
+`grc_tugas_baru` approved. You need two Staff mailboxes: a Manager (M) and a staff member (S).
+
+| # | Do this | Expected |
+|---|---------|----------|
+| A1 | From M, email a request whose first line is `PROMPT: assign this to <S>`, with a PDF. | The reply says "waiting for <S> to accept". The row reads Proposed, Acceptance Pending. |
+| A2 | Wait up to 2 minutes (working hours). | S gets "[GRC] G-… – please accept", which has the Files link but no attachment. Exactly one, even after more runs. |
+| A3 | From S, reply `Yes` in that thread. | The reply says "G-… is yours". Status Not Started, Acceptance Accepted. Within 2 minutes the assignment email arrives with the PDF. |
+| A4 | Repeat A1–A2, then S replies "No, I am on leave". | Status stays Proposed, Acceptance Declined, Flag "Declined by <S>: I am on leave". M gets an email with the reason. |
+| A5 | From M, reply `assign G-… to <another person>`, then `YES`. | Acceptance Pending again, the flag is gone, and the new person gets "please accept". |
+| A6 | Repeat A1 with S on WhatsApp. | S gets the Terima / Tolak buttons (or the template, if S has not written in 24 h). **Terima** → Not Started. |
+| A7 | Repeat A1, then tap **Tolak**. | The bot asks why; type a reason. You see the same result as A4, and the Manager is told. |

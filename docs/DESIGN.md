@@ -912,3 +912,42 @@ written without confirmation (WhatsApp [Ya] [Ubah] [Batal]; email "Reply YES to 
 questions are answered from the sheet at once. Logged per call: provider, model, prompt
 version, latency, confidence, fallback; never the text.
 
+
+## 23. Accepting an assignment (v1.5 phase 1; approved by the project owner, 16 Nov 2026)
+
+A Manager's PROMPT counts as the manager's approval. The person named still has to say yes.
+
+- **When it applies.** The request comes from a Staff member whose Role is `Manager`. Its
+  PROMPT line names an owner that matches Staff, and the Master has an `Acceptance` column.
+  In every other case nothing changes: Status `Proposed`, waiting for the manager.
+  - If the Manager names themselves, the task starts at once: `Not Started`, Acceptance
+    `Accepted`.
+  - Otherwise: Status `Proposed`, Acceptance `Pending`, and the acknowledgement says "waiting
+    for <Doer> to accept".
+- **Asking.** The change job asks the Doer once, in working hours, and records the ask in
+  `_outbox` as kind `accept_ask`.
+  - WhatsApp, inside the 24-hour window: buttons **Terima** (`acc:<id>`) and **Tolak**
+    (`dec:<id>`).
+  - WhatsApp, outside the window: the template `grc_tugas_baru` with the same payloads.
+  - Email, or the fallback: "[GRC] <id> – please accept: …", which says "Reply YES / Reply NO
+    and the reason". No files are attached yet; the email links to them.
+- **Yes.** Acceptance `Accepted`, Status `Not Started`. The next change run sends the usual
+  assignment email with the files.
+  - Yes is a Terima tap, a YES in the ask thread, a typed "ya" in reply to the WhatsApp ask,
+    or `accept G-0012` / `terima G-0012`.
+  - An accept is the answer to a question, so it needs no confirmation.
+  - `accept` must be alone or followed only by an ID, so "terima kasih" is not an accept.
+- **No.** Acceptance `Declined`, Status stays `Proposed`, Flag `Declined by <name>: <reason>`.
+  Every Manager is told the reason by email (or WhatsApp) with "assign <id> to <name>".
+  - No is a Tolak tap followed by the reason question, a NO plus the reason by email, or
+    `decline G-0012 <reason>`.
+- **Reassigning.** The Manager runs `assign <id> to <name>`. This applies on a Proposed task
+  whose Acceptance is Pending or Declined.
+  - It sets the Owner and Doer by the usual rules, clears the "Declined by" flags and sets
+    Acceptance back to `Pending`. The new person is asked.
+- **Who can answer.** Only the Doer. Anyone else gets "not allowed".
+- **Reminders.**
+  - The morning message lists every unanswered ask first, as "Assigned to you, waiting for
+    your answer".
+  - The manager summary has a section "Waiting for acceptance". The WhatsApp summary template
+    keeps its five numbers.
