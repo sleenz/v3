@@ -562,10 +562,6 @@ def test_terima_kasih_on_whatsapp_in_reply_to_the_ask_is_not_an_accept():
     assert task_now(services, task.id).acceptance == "Asked"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-A5: typed 'ya' replying to the WhatsApp ask is caught by the deadline-YES check",
-)
 def test_typed_ya_in_reply_to_the_whatsapp_ask_accepts():
     services, gmail = setup(wa_opt_in=True)
     ctx = wa_ctx(services, gmail)
@@ -791,10 +787,6 @@ def test_whatsapp_manager_prompt_without_deadline_keeps_files_for_the_assignment
     assert [a.filename for a in assignment.attachments] == ["Surat.pdf"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA-A6: WhatsApp files are not kept when the PROMPT has a deadline, so none follow YES",
-)
 def test_whatsapp_manager_prompt_with_deadline_keeps_files_for_the_assignment():
     services, gmail = setup(storage="None")
     _, task = wa_manager_request(services, gmail, "PROMPT: assign this to Staff P deadline besok")
