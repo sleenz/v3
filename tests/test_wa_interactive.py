@@ -196,7 +196,7 @@ def test_a_typed_70_percent_in_reply_to_a_card():
     card_id = "btn-1"
     assert handle_message(text("70%", context_id=card_id), ctx) == "confirm_progress"
     _, body, buttons = ctx.wa.buttons[-1]
-    assert body == f"Progress {task_id} → 70%\nBenar?"
+    assert body == f"Progress {task_id}: 0% → 70%\nBenar?"
     assert [t for _, t in buttons] == ["Ya", "Ubah", "Batal"]
     assert task(ctx, task_id).progress_value is None  # nothing written before Ya
     assert handle_message(tap("cf:yes"), ctx) == "confirmed_progress"

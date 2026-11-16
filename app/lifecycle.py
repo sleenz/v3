@@ -481,6 +481,9 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
     if task is None:
         return CommandResult(f"I can't find {task_id}. Nothing changed.")
 
+    if command.name == "status":  # section 24: a read, any Staff member, any status
+        return CommandResult(task_status(task, staff, today), task.id)
+
     if command.name in ANSWERS:
         return _answer_assignment(command, task, ctx)
 
@@ -643,6 +646,46 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
         return CommandResult(f"{task.id} is Done. Thank you.", task.id, changed=True)
 
     return CommandResult("I didn't understand that command. Send help.")
+
+
+def task_status(task: Task, staff: list[StaffMember], today: date) -> str:
+    """One task's state from the Sheet (`status G-0012`, "kapan deadline G-0012?"): no AI
+    wording, no change."""
+    if task.due_date is not None:
+        left = (task.due_date - today).days
+        when = (
+            f"{-left} hari terlambat"
+            if left < 0
+            else "hari ini"
+            if left == 0
+            else f"{left} hari lagi"
+        )
+        due = f"due {task.due_date:%a %d %b %Y} ({when})"
+    else:
+        due = "belum ada due date"
+    value = task.progress_value
+    pct = round(value * 100) if value is not None else 0
+    reviewer = default_reviewer(task.reviewer, task.doer, staff) if task.review_needed else None
+    review = f", reviewer {reviewer.name}" if reviewer is not None else ""
+    lines = [
+        f"{task.id} – {task.title}: {due}, status {task.status}, progress {pct}%"
+        f", doer {task.doer or '-'}{review}."
+    ]
+    if task.status == "Proposed" and task.acceptance.strip().lower() == PENDING:
+        lines.append(f"Waiting for {task.doer or 'the Doer'} to accept.")
+    elif task.status == "Proposed":
+        lines.append("Waiting for the manager's approval.")
+    if task.status == "On Hold":
+        blocked = [n for n in task.notes.splitlines() if n.startswith("Blocked ")]
+        if blocked:
+            lines.append(blocked[-1])
+    if task.status == "Returned" and task.review_notes.strip():
+        lines.append(f"Review notes: {task.review_notes.strip()}")
+    if task.flags:
+        lines.append(f"Flag: {'; '.join(task.flags)}")
+    if task.last_updated is not None:
+        lines.append(f"Last updated {task.last_updated:%d %b %Y %H:%M}.")
+    return "\n".join(lines)
 
 
 def _answer_assignment(command: Command, task: Task, ctx: CommandContext) -> CommandResult:

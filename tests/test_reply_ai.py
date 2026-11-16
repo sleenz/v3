@@ -281,7 +281,7 @@ def test_one_open_task_is_used_several_give_a_list():
     ctx = context(ai)
     first = add(ctx, "ATMR report", 3)
     handle_message(text("udah 40%"), ctx)
-    assert ctx.wa.buttons[-1][1].startswith(f"Progress {first} → 40%")
+    assert ctx.wa.buttons[-1][1].startswith(f"Progress {first}: 0% → 40%")
     handle_message(tap("cf:no"), ctx)
     add(ctx, "Manpower form", 9)
     assert handle_message(text("udah 40%"), ctx) == "reply_pick"
@@ -330,7 +330,8 @@ def test_email_reply_in_a_reminder_thread_read_by_the_ai_then_yes():
     ctx.store.load()
     process_inbox(gmail, ctx.services)
     assert "Reply YES to confirm" in gmail.replies[-1][1].text
-    assert f"{first} terhambat (On Hold): waiting for finance" in gmail.replies[-1][1].text
+    expected = f"Status {first}: In Progress → On Hold (terhambat): waiting for finance"
+    assert expected in gmail.replies[-1][1].text
     assert task(ctx, first).status == "In Progress"
     gmail.add("e2", thread_id="th-1", sender_email="staff.a@example.com",
               subject="Re: [GRC] Your tasks", body_text="Yes")  # fmt: skip

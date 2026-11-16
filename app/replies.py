@@ -22,9 +22,8 @@ from app.commands import Command, parse_command, task_id_in
 from app.extract.ai import AIProvider
 from app.extract.clean import mask_text
 from app.extract.reply import ReplyReading, TaskLine, read_reply
-from app.lifecycle import CHANGES
+from app.lifecycle import CHANGES, task_status
 from app.models import CONVERSATIONS, Channel, Conversation, StaffMember, Task
-from app.route import default_reviewer
 from app.sheets import SchemaError, SheetStore
 
 Kind = Literal["change", "ask", "pick", "question", "list", "help", "request", "nothing", "now"]
@@ -43,6 +42,7 @@ class Understanding:
     via: Literal["ai", "rules"] = "rules"
     step: str = ""  # for kind "ask": the question to start (blocked_reason, extension_date, …)
     ai_text: str = ""
+    guessed: bool = False  # the task is only the person's one open task (nothing named it)
 
 
 @dataclass
@@ -55,6 +55,7 @@ class Pending:
     message_id: str = ""  # the message that asked for it (dedupe and ProgressLog)
     media: list[dict[str, str]] = field(default_factory=list)  # WhatsApp files to fetch on Ya
     email_id: str = ""  # the email whose attachments go with it
+    intake: bool = False  # a new email read as an update: NO logs it as a request (s. 24)
 
     def command(self) -> Command:
         return Command(self.name, self.task_id, self.value)  # type: ignore[arg-type]
@@ -150,8 +151,13 @@ def understand(
             ai, mask_text(text, mask_emails=mask_emails), person.role, lines, linked, today
         )
     if reading is not None:
-        return _from_reading(reading, known or reading.task_id or single, tasks, has_files)
-    return _by_rules(text, known, single, tasks, has_files)
+        named_task = known or reading.task_id
+        understood = _from_reading(reading, named_task or single, tasks, has_files)
+    else:
+        named_task = known
+        understood = _by_rules(text, known, single, tasks, has_files)
+    understood.guessed = named_task is None and understood.task_id is not None
+    return understood
 
 
 def _by_rules(
@@ -167,7 +173,8 @@ def _by_rules(
         command = Command("progress", None, "50")
     if command is None:
         return Understanding("nothing", task_id=known)
-    if command.name in ("mine", "today", "week", "all", "recurring", "files", "pause", "resume"):
+    if command.name in ("mine", "today", "week", "all", "recurring", "files", "pause", "resume",
+                        "status"):  # fmt: skip
         return Understanding("now", command, command.task_id or known)
     task_id = command.task_id or context
     if command.name == "undo":
@@ -187,21 +194,46 @@ def _by_rules(
 # --- What the change says --------------------------------------------------------------------
 
 
+def _due_text(day: date | None) -> str:
+    return f"{day:%d %b %Y}" if day else "belum ada"
+
+
+def _date_text(value: str) -> str:
+    try:
+        return f"{date.fromisoformat(value):%d %b %Y}"
+    except ValueError:
+        return value
+
+
 def describe(command: Command, task: Task | None, files: list[str] | None = None) -> str:
-    """The change in one line, for "Benar?" / "Reply YES to confirm"."""
+    """The change in one line, for "Benar?" / "Reply YES to confirm". With the task known it
+    shows what the Sheet holds now and what it becomes (section 24): "Progress G-0012: 40% →
+    70%", "Status G-0012: In Progress → On Hold"."""
     tid = command.task_id or "tugas terakhir Anda"
     value = command.value.strip()
     with_files = f" (file: {', '.join(files)})" if files else ""
+    status = task.status if task is not None and task.status else ""
+
+    def moved(to: str) -> str:
+        if status and status != to:
+            return f"Status {tid}: {status} → {to}"
+        return f"Status {tid}: {to}"
+
     if command.name == "progress":
-        return f"Progress {tid} → {value.rstrip('%')}%"
+        number = value.rstrip("%")
+        if task is None:
+            return f"Progress {tid} → {number}%"
+        line = f"Progress {tid}: {_pct(task)}% → {number}%"
+        return f"{line} (status → In Progress)" if status == "Not Started" else line
     if command.name == "blocked":
-        return f"{tid} terhambat (On Hold): {value}"
+        return f"{moved('On Hold')} (terhambat): {value}"
     if command.name == "extension":
-        return f"Minta {tid} mundur ke {value} (manager yang memutuskan)"
+        before = f"due {_due_text(task.due_date)} → " if task is not None else "mundur ke "
+        return f"Minta {tid} {before}{_date_text(value)} (manager yang memutuskan)"
     if command.name == "review":
-        return f"Kirim {tid} untuk review{with_files}"
+        return f"Kirim {tid} untuk review – {moved('In Review')}{with_files}"
     if command.name == "done":
-        return f"{tid} selesai{with_files}"
+        return f"{tid} selesai – {moved('Done')}{with_files}"
     if command.name == "snooze":
         return f"Tanpa pengingat {tid} sampai {value or 'hari kerja berikutnya'}"
     if command.name == "note":
@@ -209,12 +241,16 @@ def describe(command: Command, task: Task | None, files: list[str] | None = None
     if command.name == "undo":
         return f"Batalkan perubahan terakhir Anda di {tid}"
     if command.name == "approve":
-        return f"Approve {tid}"
+        return f"Approve {tid} – {moved('Approved')}"
     if command.name == "return":
-        return f"Kembalikan {tid}: {value}"
+        return f"Kembalikan {tid} – {moved('Returned')}: {value}"
     if command.name == "assign":
+        if task is not None and task.doer.strip():
+            return f"Serahkan {tid}: doer {task.doer} → {value}"
         return f"Serahkan {tid} ke {value}"
     if command.name == "extension_ok":
+        if task is not None:
+            return f"Setujui perpanjangan {tid} (due sekarang {_due_text(task.due_date)})"
         return f"Setujui perpanjangan {tid}"
     if command.name == "extension_no":
         return f"Tolak perpanjangan {tid}"
@@ -224,25 +260,8 @@ def describe(command: Command, task: Task | None, files: list[str] | None = None
 def answer(task: Task | None, staff: list[StaffMember], today: date) -> str:
     """A question about a task, answered from the Sheet (no AI wording, no confirmation)."""
     if task is None:
-        return "Tugas yang mana? Kirim ID-nya, mis. kapan deadline G-0012?"
-    if task.due_date is not None:
-        left = (task.due_date - today).days
-        when = (
-            f"{-left} hari terlambat"
-            if left < 0
-            else "hari ini"
-            if left == 0
-            else f"{left} hari lagi"
-        )
-        due = f"due {task.due_date:%a %d %b %Y} ({when})"
-    else:
-        due = "belum ada due date"
-    reviewer = default_reviewer(task.reviewer, task.doer, staff) if task.review_needed else None
-    review = f", reviewer {reviewer.name}" if reviewer is not None else ""
-    return (
-        f"{task.id} – {task.title}: {due}, status {task.status}, progress {_pct(task)}%"
-        f", doer {task.doer or '-'}{review}."
-    )
+        return "Tugas yang mana? Kirim ID-nya, mis. status G-0012 atau kapan deadline G-0012?"
+    return task_status(task, staff, today)
 
 
 def needs_confirmation(command: Command) -> bool:
