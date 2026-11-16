@@ -144,7 +144,7 @@ def logged_text(result: TaskResult, failed_files: list[str]) -> str:
             "I could not attach " + ", ".join(failed_files) + ". Please drop the file(s) in the "
             "Files link above."
         )
-    lines.append("Waiting for manager approval.")
+    lines.append(result.next_step or "Waiting for manager approval.")
     return "\n".join(lines)
 
 

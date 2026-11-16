@@ -38,6 +38,7 @@ from app.route import (
     managers,
     match_staff_name,
     owner_and_doer,
+    split_team,
 )
 from app.sheets import SchemaError, SheetStore
 
@@ -79,6 +80,14 @@ def files_label(attachments: list[Attachment]) -> str:
 def _is_party(person: StaffMember, task: Task) -> bool:
     names = (task.owner.strip().casefold(), task.doer.strip().casefold())
     return person.role == "Manager" or person.name.casefold() in names
+
+
+def _supports(person: StaffMember, task: Task) -> bool:
+    """Named in `Support` (section 25)."""
+    return person.name.casefold() in {name.casefold() for name in task.supporters}
+
+
+SUPPORT_CAN = frozenset({"progress", "note", "blocked"})  # section 25: the rest is the Doer's
 
 
 def _audit(
@@ -304,6 +313,21 @@ def notify(
         for manager in managers(staff):
             _send(store, gmail, email_of(manager.name), _subject(task, "extension asked"),
                   lines, person=manager.name, task_id=task.id, kind=event)  # fmt: skip
+    elif event == "declined":
+        lines = [
+            f"{task.doer or 'The assignee'} declined {task.id}: {task.title}",
+            f"Reason: {note or 'none given'}",
+            f"Due: {due}",
+            "",
+            "To hand it to someone else, reply with the first line:",
+            f"  assign {task.id} to <name>",
+            "(they are asked to accept it), or change Doer and Status in the sheet.",
+            "",
+            link,
+        ]
+        for manager in managers(staff):
+            _send(store, gmail, email_of(manager.name), _subject(task, "declined"), lines,
+                  person=manager.name, task_id=task.id, kind=event)  # fmt: skip
     elif event in ("extension_approved", "extension_rejected"):
         verdict = "approved" if event == "extension_approved" else "rejected"
         lines = [f"The extension for {task.id} was {verdict}: {task.title}", f"Due: {due}", link]
@@ -326,17 +350,20 @@ def notify(
 # --- Lists ------------------------------------------------------------------------------------
 
 
-def _line(task: Task) -> str:
+def _line(task: Task, person: StaffMember | None = None) -> str:
     due = f"due {task.due_date:%d %b}" if task.due_date else "no due date"
-    return f"• {task.id} – {task.title} ({due}, {task.status})"
+    role = ", support" if person is not None and _supports(person, task) else ""
+    return f"• {task.id} – {task.title} ({due}, {task.status}{role})"
 
 
 def _mine(tasks: list[Task], person: StaffMember) -> list[Task]:
+    """Open tasks the person owns, does or supports (section 25)."""
     name = person.name.casefold()
     return [
         t
         for t in tasks
-        if t.status in OPEN_STATUSES and name in (t.doer.casefold(), t.owner.casefold())
+        if t.status in OPEN_STATUSES
+        and (name in (t.doer.casefold(), t.owner.casefold()) or _supports(person, t))
     ]
 
 
@@ -373,10 +400,11 @@ def recurring_reply(store: SheetStore, today: date) -> str:
     return "\n".join(parts).strip()
 
 
-def _list_reply(title: str, tasks: list[Task]) -> str:
+def _list_reply(title: str, tasks: list[Task], person: StaffMember | None = None) -> str:
     if not tasks:
         return f"{title}: nothing."
-    return "\n".join([f"{title} ({len(tasks)}):", *(_line(t) for t in _sorted(tasks))])
+    lines = (_line(t, person) for t in _sorted(tasks))
+    return "\n".join([f"{title} ({len(tasks)}):", *lines])
 
 
 # --- Commands ---------------------------------------------------------------------------------
@@ -384,7 +412,8 @@ def _list_reply(title: str, tasks: list[Task]) -> str:
 
 CHANGES = frozenset({"progress", "review", "done", "approve", "return", "assign", "blocked",
                      "extension", "extension_ok", "extension_no", "snooze", "undo",
-                     "note"})  # fmt: skip
+                     "note", "accept", "decline"})  # fmt: skip
+ANSWERS = frozenset({"accept", "decline"})  # the answer is the confirmation (section 23)
 
 
 def run_command(command: Command, ctx: CommandContext) -> CommandResult:
@@ -420,11 +449,11 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
         mine = _mine(tasks, actor)
         if command.name == "today":
             mine = [t for t in mine if t.due_date and t.due_date <= today]
-            return CommandResult(_list_reply("Due today or overdue", mine))
+            return CommandResult(_list_reply("Due today or overdue", mine, actor))
         if command.name == "week":
             mine = [t for t in mine if t.due_date and t.due_date <= today + timedelta(days=7)]
-            return CommandResult(_list_reply("Due within 7 days", mine))
-        return CommandResult(_list_reply(f"{actor.name}, your open tasks", mine))
+            return CommandResult(_list_reply("Due within 7 days", mine, actor))
+        return CommandResult(_list_reply(f"{actor.name}, your open tasks", mine, actor))
 
     if command.name in ("all", "recurring", "pause", "resume"):
         if not is_manager:
@@ -463,6 +492,19 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
     task = next((t for t in tasks if t.id == task_id), None)
     if task is None:
         return CommandResult(f"I can't find {task_id}. Nothing changed.")
+
+    if command.name == "status":  # section 24: a read, any Staff member, any status
+        return CommandResult(task_status(task, staff, today), task.id)
+
+    if command.name in ANSWERS:
+        return _answer_assignment(command, task, ctx)
+
+    if (
+        command.name == "assign"
+        and task.status == "Proposed"
+        and (task.awaiting_acceptance or task.acceptance.strip().lower() == "declined")
+    ):
+        return _reassign_for_acceptance(command, task, ctx, staff)
 
     if command.name == "files":
         reviewer = default_reviewer(task.reviewer, task.doer, staff)
@@ -519,9 +561,16 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
         return _decide_extension(command, task, ctx, today)
 
     if not _is_party(actor, task):
-        return CommandResult(
-            f"You are not the Owner or Doer of {task.id}. Nothing changed.", task.id
-        )
+        if _supports(actor, task) and command.name not in SUPPORT_CAN:
+            return CommandResult(
+                f"You support {task.id}; only {task.doer or 'the Doer'} can do that. You can "
+                f"update progress, add a note or mark it blocked. Nothing changed.",
+                task.id,
+            )
+        if not _supports(actor, task):
+            return CommandResult(
+                f"You are not the Owner or Doer of {task.id}. Nothing changed.", task.id
+            )
 
     if command.name == "blocked":
         reason = command.value.strip()
@@ -616,6 +665,100 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
         return CommandResult(f"{task.id} is Done. Thank you.", task.id, changed=True)
 
     return CommandResult("I didn't understand that command. Send help.")
+
+
+def task_status(task: Task, staff: list[StaffMember], today: date) -> str:
+    """One task's state from the Sheet (`status G-0012`, "kapan deadline G-0012?"): no AI
+    wording, no change."""
+    if task.due_date is not None:
+        left = (task.due_date - today).days
+        when = (
+            f"{-left} hari terlambat"
+            if left < 0
+            else "hari ini"
+            if left == 0
+            else f"{left} hari lagi"
+        )
+        due = f"due {task.due_date:%a %d %b %Y} ({when})"
+    else:
+        due = "belum ada due date"
+    value = task.progress_value
+    pct = round(value * 100) if value is not None else 0
+    reviewer = default_reviewer(task.reviewer, task.doer, staff) if task.review_needed else None
+    review = f", reviewer {reviewer.name}" if reviewer is not None else ""
+    support = f", support {', '.join(task.supporters)}" if task.supporters else ""
+    lines = [
+        f"{task.id} – {task.title}: {due}, status {task.status}, progress {pct}%"
+        f", doer {task.doer or '-'}{support}{review}."
+    ]
+    if task.awaiting_acceptance:
+        lines.append(f"Waiting for {task.doer or 'the Doer'} to accept.")
+    elif task.status == "Proposed":
+        lines.append("Waiting for the manager's approval.")
+    if task.status == "On Hold":
+        blocked = [n for n in task.notes.splitlines() if n.startswith("Blocked ")]
+        if blocked:
+            lines.append(blocked[-1])
+    if task.status == "Returned" and task.review_notes.strip():
+        lines.append(f"Review notes: {task.review_notes.strip()}")
+    if task.flags:
+        lines.append(f"Flag: {'; '.join(task.flags)}")
+    if task.last_updated is not None:
+        lines.append(f"Last updated {task.last_updated:%d %b %Y %H:%M}.")
+    return "\n".join(lines)
+
+
+def _answer_assignment(command: Command, task: Task, ctx: CommandContext) -> CommandResult:
+    """The Doer accepts or declines a task a Manager assigned by PROMPT (DESIGN section 23).
+    Accept: Status Not Started, so the change job emails the assignment with the files.
+    Decline: the task stays Proposed for the Manager, flagged with the reason."""
+    actor = ctx.actor
+    if not task.awaiting_acceptance:  # also a task closed in the Sheet meanwhile (QA-A2)
+        return CommandResult(f"{task.id} is not waiting for your answer.", task.id)
+    if actor.name.casefold() != task.doer.strip().casefold():
+        return CommandResult(f"Only {task.doer or 'the Doer'} can answer for {task.id}.", task.id)
+    if command.name == "accept":
+        _apply(ctx, task, "Accepted", {"Acceptance": "Accepted", "Status": "Not Started"})
+        return CommandResult(
+            f"Thanks, {task.id} is yours. The assignment email with the files follows within a "
+            "few minutes (in working hours).",
+            task.id,
+            changed=True,
+        )
+    reason = command.value.strip() or "no reason given"
+    flag = f"Declined by {actor.name}: {reason}"
+    flags = "; ".join(dict.fromkeys([*task.flags, flag]))
+    _apply(ctx, task, "Declined", {"Acceptance": "Declined", "Flag": flags}, "declined", reason)
+    return CommandResult(
+        f"Declined {task.id}. The manager is told and will reassign it.", task.id, changed=True
+    )
+
+
+def _reassign_for_acceptance(
+    command: Command, task: Task, ctx: CommandContext, staff: list[StaffMember]
+) -> CommandResult:
+    """The Manager hands a declined (or unanswered) task to someone else: they are asked."""
+    actor = ctx.actor
+    if actor.role != "Manager":
+        return CommandResult(f"{task.id} waits for the manager. Nothing changed.", task.id)
+    target, helpers, problem = _team(command.value, actor, staff)
+    if target is None:
+        return CommandResult(f"{problem} Nothing changed.", task.id)
+    owner, doer = owner_and_doer(target, staff)
+    flags = "; ".join(f for f in task.flags if not f.startswith("Declined by"))
+    changes: dict[str, Any] = {"Owner": owner, "Doer": doer, "Flag": flags}
+    if helpers is not None:
+        skip = (owner, doer, task.reviewer.strip())  # never the reviewer (QA-C4)
+        changes["Support"] = "; ".join(h for h in helpers if h not in skip)
+    if doer.casefold() == actor.name.casefold():
+        changes.update({"Acceptance": "Accepted", "Status": "Not Started"})
+        _apply(ctx, task, "Delegated", changes)
+        return CommandResult(f"{task.id} is now yours and started.", task.id, changed=True)
+    changes["Acceptance"] = "Pending"
+    _apply(ctx, task, "Delegated", changes)
+    return CommandResult(
+        f"{task.id} goes to {doer}; they are asked to accept it.", task.id, changed=True
+    )
 
 
 def _day(value: date | None) -> str:
@@ -733,6 +876,8 @@ def _assign(
     command: Command, task: Task, ctx: CommandContext, staff: list[StaffMember]
 ) -> CommandResult:
     actor = ctx.actor
+    if len(_names(command.value)) > 1:  # "assign G-0012 to cia and enzo" (section 25)
+        return _assign_team(command, task, ctx, staff)
     target = actor if is_me(command.value) else match_staff_name(command.value, staff)
     if target is None:
         return CommandResult(f'I can\'t find "{command.value}" in Staff. Nothing changed.', task.id)
@@ -748,6 +893,50 @@ def _assign(
     _apply(ctx, task, "Delegated", changes, "assigned")
     return CommandResult(
         f"{task.id} is now with {changes['Doer']}. They are told.", task.id, changed=True
+    )
+
+
+def _names(value: str) -> list[str]:
+    """`cia and enzo` → two names; `Staff D, thanks` → one (section 25)."""
+    return split_team(value.replace(";", ",")) or [value.strip()]
+
+
+def _team(
+    value: str, actor: StaffMember, staff: list[StaffMember]
+) -> tuple[StaffMember | None, list[str] | None, str]:
+    """`cia and enzo` → (Cia, [Enzo], ""): the first is the Doer, the rest Support. One name →
+    (person, None, ""): Support is left as it is. Unknown name → (None, None, why)."""
+    names = _names(value)
+    people: list[StaffMember] = []
+    for name in names:
+        person = actor if is_me(name) else match_staff_name(name, staff)
+        if person is None:
+            return None, None, f'I can\'t find "{name}" in Staff.'
+        if person not in people:
+            people.append(person)
+    helpers = [p.name for p in people[1:]] if len(names) > 1 else None
+    return people[0], helpers, ""
+
+
+def _assign_team(
+    command: Command, task: Task, ctx: CommandContext, staff: list[StaffMember]
+) -> CommandResult:
+    """The Manager sets the Doer and Support in one go (section 25)."""
+    actor = ctx.actor
+    if actor.role != "Manager":
+        return CommandResult(
+            "Only the manager can give a task to several people. Nothing changed.", task.id
+        )
+    target, helpers, problem = _team(command.value, actor, staff)
+    if target is None:
+        return CommandResult(f"{problem} Nothing changed.", task.id)
+    owner, doer = owner_and_doer(target, staff)
+    support = [h for h in helpers or [] if h not in (owner, doer, task.reviewer.strip())]
+    changes: dict[str, Any] = {"Owner": owner, "Doer": doer, "Support": "; ".join(support)}
+    _apply(ctx, task, "Delegated", changes, "assigned")
+    helping = f", with {', '.join(support)} supporting" if support else ""
+    return CommandResult(
+        f"{task.id} is now with {doer}{helping}. They are told.", task.id, changed=True
     )
 
 

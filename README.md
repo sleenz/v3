@@ -10,6 +10,9 @@ Global Financial Services, Hong Kong.
 
 ## How it works
 
+Step-by-step diagrams of the six phases (intake → logging → approval → reminders → updates →
+review and done): [`docs/FLOW.md`](docs/FLOW.md).
+
 ```
 Email to the bot mailbox ─┐                         ┌─> Master row (status Proposed) + AuditLog
  (allowed senders only)   ├─> process_request() ────┤   + reply to the sender in the thread
@@ -260,7 +263,29 @@ Replaces the 09:00 digest and the old daily WhatsApp reminder.
       (`Yes` or the date the person agreed). `Reminders paused` = `Yes` still stops everything.
 - [ ] Scheduler: run `deploy/setup_scheduler.sh` (adds `grc-reminders`, deletes `grc-digest` and
       `grc-wa-reminders`).
-- [ ] WhatsApp only: submit the four templates in `whatsapp_templates/` (section 9b).
+- [ ] WhatsApp only: submit the five templates in `whatsapp_templates/` (section 9b).
+- [ ] Accepting an assignment (DESIGN section 23):
+      - Add the column **`Acceptance`** to Master. Until it exists, a Manager's PROMPT still waits
+        for approval as before, and `/health` warns.
+      - On WhatsApp, also submit `grc_tugas_baru` (section 9b).
+      - Tell the team: when the Manager assigns you a task, you get "please accept". Reply
+        **YES** (or tap **Terima**) to take it; the files follow. Reply **NO** and the reason
+        (or tap **Tolak**), and the Manager reassigns it with `assign G-… to <name>`.
+- [ ] Updates by any email (DESIGN section 24), no setup needed. Tell the team:
+      - They can email the bot a new message about a task, e.g. "G-0012 is at 70%, waiting
+        for finance". With Gemini on, the task ID can be left out: "the stress test report is
+        half done".
+      - The bot shows the change as before → after and asks for YES. If it was really a new
+        request, they reply NO and it is logged as one.
+      - `status G-0012` (or "how is G-0012?") answers from the sheet, by email or WhatsApp.
+- [ ] Several people on one task (DESIGN section 25), no setup needed (the `Support` column
+      already exists). Tell the team:
+      - "PROMPT: assign this to Cia and Enzo" makes Cia the Doer and Enzo Support. Use "or"
+        only for alternatives.
+      - `assign G-0012 to Cia and Enzo` (Manager) does the same on an existing task.
+      - Support gets the assignment email and files and the due-today reminders. They can
+        update progress, add notes and mark it blocked. Only the Doer sends it for review or
+        marks it done.
 - [ ] Tell the team how to update a task (DESIGN section 22):
       - WhatsApp: tap **Lihat tugas** in a reminder → one card per task with **Update progres**
         (25–100 %), **Selesai** or **Kirim review**, **Lainnya** (Selesai, Terhambat, Minta
@@ -407,7 +432,7 @@ BRI does this part in Meta; the service only needs the IDs and two secrets after
 - [ ] WhatsApp → Configuration → Webhook: callback URL
       `https://v2-git-1085688466076.asia-southeast2.run.app/wa/webhook`, the verify token above,
       then subscribe to the **messages** field.
-- [ ] WhatsApp Manager → Message templates → create the four templates in
+- [ ] WhatsApp Manager → Message templates → create the five templates in
       `whatsapp_templates/` exactly as written there: category *Utility*, language
       *Indonesian* (`id`), the body text with its example values, and one **quick-reply** button
       `Lihat tugas`. Wait for Meta's approval (until then the reminder falls back to email):
@@ -420,6 +445,9 @@ BRI does this part in Meta; the service only needs the IDs and two secrets after
         Lihat tugas untuk detail."
       - `grc_update_tugas` (a notice when the person has not written in 24 hours): "Update tugas
         GRC {{1}}: {{2}}. Ketuk Lihat tugas untuk detail."
+      - `grc_tugas_baru` (asking a person to accept a Manager's assignment, section 23):
+        "Tugas GRC baru dari manager untuk Anda: {{1}} – {{2}}. Ketuk Terima untuk mengambilnya,
+        atau Tolak bila tidak bisa." Two quick-reply buttons: `Terima` and `Tolak`.
       The old `grc_daily_reminder` is no longer sent and can be deleted. Templates are paid
       *utility* messages when the person has not written to the bot in the last 24 hours.
 - [ ] Sheet: add a `WhatsApp` column to **Staff** (international format, e.g. `+852 9123 4567`)

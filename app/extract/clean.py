@@ -100,6 +100,13 @@ def unwrap_forward(body: str, sender_name: str = "", sender_email: str = "") -> 
     return Unwrapped(inner, name, email, subject.strip("*").strip(), note, forwarded=True)
 
 
+def looks_forwarded(body: str) -> bool:
+    """A forwarded message: a full header block, or just a "Forwarded message" marker line."""
+    if unwrap_forward(body or "").forwarded:
+        return True
+    return any(_FORWARD_MARKER.match(line) for line in (body or "").splitlines())
+
+
 # --- Cleaning ----------------------------------------------------------------------------------
 
 _QUOTE_HEADER = re.compile(

@@ -34,7 +34,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, SecretStr
 
-from app import clock, outbox, replies
+from app import clock, outbox, progress, replies
 from app.chat import logged_text, person_tasks_text
 from app.commands import Command, parse_command, task_id_in
 from app.extract.prompt import assignee, parse_prompt
@@ -656,15 +656,15 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
             _reply(ctx, message.sender, "Tombol belum bisa dipakai. Coba lagi nanti.")
             return "tap_unavailable"
         if message.tap.startswith("cf:"):  # Ya / Ubah / Batal on a proposed change
-            return _confirm_answer(message.tap.removeprefix("cf:"), person, ctx, now)
+            return _confirm_answer(message.tap.removeprefix("cf:"), person, ctx, now, message.id)
         return wa_ui.handle_tap(message, person, ctx, now)
     if message.kind in ("text", "media") and ctx.gmail is not None:
         if replies.pending_confirm(store, person.name, "WhatsApp", now) is not None:
             typed = message.text.strip()
             if replies.is_yes(typed) and not message.media:
-                return _confirm_answer("yes", person, ctx, now)
+                return _confirm_answer("yes", person, ctx, now, message.id)
             if replies.is_no(typed) and not message.media:
-                return _confirm_answer("no", person, ctx, now)
+                return _confirm_answer("no", person, ctx, now, message.id)
             replies.drop_confirm(store, person.name)  # anything else replaces it ("Ubah")
         convo, gone = wa_ui.take_conversation(store, person.name, now)
         if convo is not None:
@@ -684,7 +684,10 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
         prompt = parse_prompt(text)
         if prompt is not None:
             return _handle_prompt(message, prompt, ctx, now)
-        answered = _deadline_answer(message, text, ctx, now)
+        # section 23 before the deadline YES: "ya" replying to "Terima?" accepts (QA-A5)
+        answered = _acceptance_answer(message, person, ctx) if message.context_id else None
+        if answered is None:
+            answered = _deadline_answer(message, text, ctx, now)
         if answered is not None:
             return answered
     if message.kind == "other":
@@ -700,6 +703,22 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
 # --- Typed replies (DESIGN section 22, part C) ---------------------------------------------------
 
 CONFIRM_BUTTONS = [("cf:yes", "Ya"), ("cf:edit", "Ubah"), ("cf:no", "Batal")]
+
+
+def _acceptance_answer(message: WAMessage, person: StaffMember, ctx: WaContext) -> str | None:
+    """Section 23: "ya" / "tidak bisa, cuti" typed in reply to the Doer's "Terima?" message."""
+    from app import acceptance
+
+    if message.media:
+        return None
+    linked = _context_task(ctx, message, implicit=False)
+    task = next((t for t in ctx.store.tasks() if t.id == linked), None) if linked else None
+    if task is None or not acceptance.pending(task):
+        return None
+    answer = acceptance.answer_in(message.text.strip())
+    if answer is None or task.doer.strip().casefold() != person.name.casefold():
+        return None
+    return _run_now(message, person, ctx, Command(answer[0], task.id, answer[1]))
 
 
 def _handle_reply(
@@ -810,9 +829,15 @@ def _run_now(message: WAMessage, person: StaffMember, ctx: WaContext, command: C
     return f"command_{command.name}"
 
 
-def _confirm_answer(answer: str, person: StaffMember, ctx: WaContext, now: datetime) -> str:
-    """Ya: apply the proposed change; Ubah: drop it and ask for the right one; Batal: drop it."""
+def _confirm_answer(
+    answer: str, person: StaffMember, ctx: WaContext, now: datetime, answer_id: str = ""
+) -> str:
+    """Ya: apply the proposed change; Ubah: drop it and ask for the right one; Batal: drop it.
+    `answer_id`: the Ya message itself; one delivered again confirms nothing new (QA-B7)."""
     store = ctx.store
+    if answer_id and progress.already_processed(store, answer_id):
+        logger.info("confirm_duplicate", extra={"kind": answer})
+        return "confirm_duplicate"
     convo = replies.pending_confirm(store, person.name, "WhatsApp", now)
     if convo is None:
         _reply(ctx, person.wa_id, "Tidak ada perubahan yang menunggu (sudah lewat 30 menit?).")
@@ -831,7 +856,7 @@ def _confirm_answer(answer: str, person: StaffMember, ctx: WaContext, now: datet
         pending.command(),
         CommandContext(store=store, gmail=ctx.gmail, actor=person, channel="WhatsApp",  # type: ignore[arg-type]
                        sheet_url=ctx.sheet_url, files=files, context_task_id=pending.task_id,
-                       message_id=pending.message_id, wa=ctx.wa),
+                       message_id=f"{pending.message_id} {answer_id}".strip(), wa=ctx.wa),
     )  # fmt: skip
     reply = result.reply
     if failed:
@@ -1168,6 +1193,7 @@ def _log_draft(draft: WaPending, ctx: WaContext, now: datetime) -> str:
     if ask:
         flags = "; ".join(dict.fromkeys([*result.flags, DEADLINE_FLAG]))
         store.update_task(result.task_id, {"Flag": flags})
+    if result.created:  # files are kept whether or not the deadline is asked (QA-A6)
         stored = [a for a in attachments if a.data]
         if stored and ctx.gmail is not None:  # kept in the bot mailbox (v1.4 decision F2)
             try:

@@ -397,7 +397,7 @@ def _manager_slot(
     from app.jobs import manager_extras
 
     sections = manager_sections(tasks_list, today)
-    counts = [str(len(found)) for _, found in sections]
+    counts = [str(len(found)) for _, found in sections[:5]]  # the template's 5 numbers
     text_sections = [(title, [task_line(t) for t in found]) for title, found in sections]
     text_sections += manager_extras(store, tasks_list, staff, config, today)
     label = f"{today:%a %d %b %Y}"

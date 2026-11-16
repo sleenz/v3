@@ -18,6 +18,8 @@ CommandName = Literal[
     # v1.4 part 2 (DESIGN section 22)
     "blocked", "extension", "extension_ok", "extension_no", "snooze", "undo",
     "note",  # part C: information added to Notes
+    "accept", "decline",  # section 23: the assignee answers a Manager's assignment
+    "status",  # section 24: one task's state, read from the Sheet
 ]  # fmt: skip
 
 _TASK_ID = re.compile(r"\bG-?(\d{1,5})\b", re.IGNORECASE)
@@ -46,6 +48,10 @@ _TASK_VERBS: dict[str, CommandName] = {
     "snooze": "snooze", "tunda": "snooze", "ingatkan besok": "snooze", "besok aja": "snooze",
     "undo": "undo", "batalkan": "undo",
     "note": "note", "catatan": "note",
+    "accept": "accept", "terima": "accept", "terima tugas": "accept",
+    "decline": "decline", "tolak tugas": "decline",
+    "status": "status", "how is": "status", "how's": "status", "gimana": "status",
+    "bagaimana": "status", "cek status": "status", "status tugas": "status",
 }  # fmt: skip
 _PERSON_VERBS: dict[str, CommandName] = {
     "pause": "pause", "jeda": "pause", "stop": "pause",
@@ -74,6 +80,12 @@ def task_id_in(text: str) -> str | None:
     """The first task ID in `text`, as stored (G-0012); "g12" and "G-12" count too."""
     match = _TASK_ID.search(text or "")
     return f"G-{int(match.group(1)):04d}" if match else None
+
+
+def task_ids_in(text: str) -> list[str]:
+    """Every task ID in `text`, in order, without repeats."""
+    found = (f"G-{int(m.group(1)):04d}" for m in _TASK_ID.finditer(text or ""))
+    return list(dict.fromkeys(found))
 
 
 def is_me(name: str) -> bool:
@@ -129,8 +141,11 @@ def parse_command(text: str, has_context: bool = False) -> Command | None:
             if not number:
                 return None
             return Command("progress", found, number.group(1).replace(",", "."))
-        if name in ("approve", "files", "done", "review") and rest and not found:
-            return None  # with context, "cek laporan ini dulu" is not a bare command
+        bare_only = ("approve", "files", "done", "review", "accept", "status")
+        if name in bare_only and rest and not found:
+            return None  # "cek laporan ini dulu", "terima kasih": not bare commands
+        if name == "accept" and rest.strip():
+            return None  # "terima G-0012 kasih": accept is the ID alone
         return Command(name, found, rest.strip())
     return None
 

@@ -71,6 +71,10 @@ def assignment_email(task: Task, staff: list[StaffMember], sheet_url: str) -> Ou
     cc = []
     if owner is not None and owner.email.strip() and owner.name != doer.name:
         cc.append(owner.email.strip())
+    for name in task.supporters:  # section 25: Support gets the same email and files
+        helper = find_person(name, staff)
+        if helper is not None and helper.email.strip() and helper.email.strip() not in cc:
+            cc.append(helper.email.strip())
 
     deliverables = [line.removeprefix("- ").strip() for line in task.deliverables.splitlines()]
     deliverables = [item for item in deliverables if item]
@@ -82,6 +86,13 @@ def assignment_email(task: Task, staff: list[StaffMember], sheet_url: str) -> Ou
         ("Owner", task.owner or "-"),
         ("Routing note", task.routing_note or "-"),
     ]
+    if task.supporters:
+        rows[5:5] = [
+            ("Doer", task.doer),
+            ("Support", ", ".join(task.supporters)),
+            ("Who does what", f"Support can update progress, add notes or mark it blocked; "
+                              f"{task.doer} sends it for review and marks it done."),
+        ]  # fmt: skip
     if task.ai_summary:
         rows.append(("AI summary", task.ai_summary))
     links = [("Files", task.files or "-"), ("Sheet", sheet_url)]
@@ -140,7 +151,8 @@ def acknowledgement_email(result: TaskResult, original: HasSender) -> OutgoingEm
         f"Flags: {'; '.join(result.flags) if result.flags else 'none'}",
         f"Files: {result.files_url or 'none'}",
         "",
-        "Waiting for manager approval. This is an automatic reply from the GRC tracker.",
+        f"{result.next_step or 'Waiting for manager approval.'} "
+        "This is an automatic reply from the GRC tracker.",
     ]
     html = "".join(f"<p>{escape(line)}</p>" for line in lines if line)
     return OutgoingEmail(

@@ -912,3 +912,130 @@ written without confirmation (WhatsApp [Ya] [Ubah] [Batal]; email "Reply YES to 
 questions are answered from the sheet at once. Logged per call: provider, model, prompt
 version, latency, confidence, fallback; never the text.
 
+
+## 23. Accepting an assignment (v1.5 phase 1; approved by the project owner, 16 Nov 2026)
+
+A Manager's PROMPT counts as the manager's approval. The person named still has to say yes.
+
+- **When it applies.** The request comes from a Staff member whose Role is `Manager`. Its
+  PROMPT line names an owner that matches Staff, and the Master has an `Acceptance` column.
+  In every other case nothing changes: Status `Proposed`, waiting for the manager.
+  - If the Manager names themselves, the task starts at once: `Not Started`, Acceptance
+    `Accepted`.
+  - Otherwise: Status `Proposed`, Acceptance `Pending`, and the acknowledgement says "waiting
+    for <Doer> to accept".
+- **Asking.** The change job asks the Doer once, in working hours. It records the ask in
+  `_outbox` as kind `accept_ask` (to find the thread) and sets Acceptance to `Asked`.
+  - Acceptance values: `Pending` (to ask), `Asked`, `Accepted`, `Declined`. Pending and Asked
+    both mean "waiting for the Doer".
+  - A reassign sets `Pending` again, so the new person, or the same person again, is asked.
+  - WhatsApp, inside the 24-hour window: buttons **Terima** (`acc:<id>`) and **Tolak**
+    (`dec:<id>`).
+  - WhatsApp, outside the window: the template `grc_tugas_baru` with the same payloads.
+  - Email, or the fallback: "[GRC] <id> – please accept: …", which says "Reply YES / Reply NO
+    and the reason". No files are attached yet; the email links to them.
+- **Yes.** Acceptance `Accepted`, Status `Not Started`. The next change run sends the usual
+  assignment email with the files.
+  - Yes is a Terima tap, a YES in the ask thread, a typed "ya" in reply to the WhatsApp ask,
+    or `accept G-0012` / `terima G-0012`.
+  - An accept is the answer to a question, so it needs no confirmation.
+  - `accept` must be alone or followed only by an ID, so "terima kasih" is not an accept.
+- **No.** Acceptance `Declined`, Status stays `Proposed`, Flag `Declined by <name>: <reason>`.
+  Every Manager is told the reason by email (or WhatsApp) with "assign <id> to <name>".
+  - No is a Tolak tap followed by the reason question, a NO plus the reason by email, or
+    `decline G-0012 <reason>`.
+- **Reassigning.** The Manager runs `assign <id> to <name>`. This applies on a Proposed task
+  whose Acceptance is Pending or Declined.
+  - It sets the Owner and Doer by the usual rules, clears the "Declined by" flags and sets
+    Acceptance back to `Pending`. The new person is asked.
+- **Who can answer.** Only the Doer. Anyone else gets "not allowed".
+- **Reminders.**
+  - The morning message lists every unanswered ask first, as "Assigned to you, waiting for
+    your answer".
+  - The manager summary has a section "Waiting for acceptance". The WhatsApp summary template
+    keeps its five numbers.
+
+## 24. Updates by any email, status, before → after (v1.5 phase 2; approved 16 Nov 2026)
+
+- **A new email can be an update.** Before this, only replies in a bot thread were read as
+  updates. Now a new email (not a reply) from a Staff member can be one too.
+  - It is read the same way: the AI first, the rules as the fallback.
+  - It counts as an update only when it is about one task:
+    - a task ID that exists, in the subject or the body; or
+    - with the AI on and no ID typed: the AI names one of the sender's own open tasks. The
+      person's "only open task" guess does not count here.
+  - It is never read as an update when it is forwarded mail (a `Fwd:` subject, a header
+    block or a "Forwarded message" line) or has a PROMPT line.
+  - It is not an update when it names two or more different tasks.
+  - A new email whose first line is a command (`G-0012 60`, `review G-0012 …`) follows the
+    same rules: forwards and PROMPTs stay requests, and NO logs it as a request.
+  - Without a task ID, it is also never read as an update when it has attachments, the
+    sender has no open tasks, or the AI is off.
+  - If the AI says `request` or `unknown`, or the rules find nothing, the email is logged as a
+    request exactly as before.
+  - Questions such as "When is G-0012 due?" are answered from the Sheet.
+- **Nothing is lost (D15).** A change from a new email waits for YES like any typed change.
+  - The confirmation adds: "Reply NO if this is a new request instead: it is then logged as
+    one".
+  - NO logs the original email as a request: row first, then acknowledgement and label.
+    "No, this is a new request" counts as NO.
+  - The question is removed only after its answer has been acted on, so a failure is retried
+    with the question still open.
+  - A YES or NO after the 30 minutes gets "that question expired, nothing changed". A late NO
+    to a new email still logs it as a request.
+  - Until YES or NO, the original email stays in the inbox, read.
+  - With the AI on, every new email from a Staff member with open tasks costs one extra reply
+    read. Its text is masked as in section 22.
+- **`status G-0012`.** Also `how is G-0012`, `gimana G-0012`, `cek status G-0012`, or
+  `status` alone in reply to a message about one task. It works on WhatsApp and by email,
+  for any Staff member and any status.
+  - The answer comes from the Sheet: due date and days left, status, progress, Doer and
+    reviewer.
+  - When they apply, it adds: waiting for acceptance or manager approval, the last "Blocked …"
+    note, the review notes, the flags and the last update.
+  - "kapan deadline G-0012?" (an AI `question`) gets the same text.
+- **Before → after.** The confirmation line shows what the Sheet holds now and what it
+  becomes:
+  - `Progress G-0012: 40% → 70%`; with `(status → In Progress)` added when the task is Not
+    Started.
+  - `Status G-0012: In Progress → On Hold (terhambat): …`
+  - `Minta G-0012 due 20 Nov 2026 → 27 Nov 2026`
+  - `Serahkan G-0012: doer Staff A → Staff P`
+  - The same pattern for review, done, approve and return.
+
+## 25. Tasks with several people: one Doer plus Support (v1.5 phase 3; approved 16 Nov 2026)
+
+A task keeps one Doer, who is accountable. Everyone else helping is listed in the existing
+Master column `Support`, `; `-separated (a `,` is read too). The Sheet's existing formulas
+(`Weighted open load`, `Support share`) are unchanged.
+
+- **Setting it.**
+  - A PROMPT whose names are joined by *and / dan / & / , / sama / serta*: "assign this to Cia
+    and Enzo". The first name is the Doer and the others are Support. This is read by rules
+    only; the AI may still pick the owner.
+  - Each name is matched on its own, with the usual small typo allowed (and flagged). If the
+    first name can't be read (unknown, or a first name two people share), the owner is flagged
+    as not found. The next person is never moved up to Doer.
+  - *with*, *plus* and *bersama* do not join names ("with Staff D as reviewer" is a reviewer).
+    Polite words after a comma ("Staff D, thanks") are not names.
+  - Names joined by *or / atau* are alternatives: nothing goes to Support, and the rules
+    flag the owner as unclear, as before.
+  - The reviewer, the Owner and the Doer are never Support.
+  - The Manager's `assign G-0012 to Cia and Enzo` sets the Owner and Doer (R4/R5) and replaces
+    Support. One name leaves Support as it is.
+  - Only the Manager can assign several people. On a task waiting for acceptance (section 23),
+    the reassign does the same.
+- **Telling them.**
+  - The assignment email goes to the Doer, cc the Owner and Support, with the same files. It
+    lists Doer, Support and who does what.
+  - Only the Doer is asked to accept.
+- **Reminders.** Support gets the due-today and last-call reminders. The morning message
+  (days before due, overdue, stale) stays the Doer's.
+- **What Support can do.**
+  - Supporters can update progress, add notes and mark the task blocked, by email, WhatsApp
+    or typed text.
+  - Review, done, extension and snooze are for the Doer, the Owner and the Manager. Support
+    gets "only <Doer> can do that".
+  - The supported task shows in their `tugas` list marked `support`. Its WhatsApp card has
+    only **Update progres** and **Lainnya**.
+  - `status` lists the supporters.

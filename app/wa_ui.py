@@ -53,6 +53,7 @@ QUESTIONS: dict[str, str] = {
     "done_proof": "Kirim file bukti untuk {task} (dokumen atau foto), atau ketik batal.",
     "review_file": "Kirim file untuk review {task}, atau ketik 'tanpa file' (atau batal).",
     "return_notes": "Apa yang perlu diperbaiki di {task}? Ketik catatannya (atau batal).",
+    "decline_reason": "Kenapa tidak bisa mengambil {task}? Ketik alasannya (atau batal).",
 }
 EXPIRED_TEXT = "Waktu menjawab untuk {task} sudah habis (30 menit). Tidak ada yang diubah."
 
@@ -175,6 +176,14 @@ def card_buttons(
         person.role == "Manager" or (reviewer is not None and reviewer.name == person.name)
     ):
         return [(tap_id("apv", task.id), "Approve"), (tap_id("ret", task.id), "Return")]
+    name = person.name.casefold()
+    doers = (task.doer.casefold(), task.owner.casefold())
+    if (
+        name not in doers
+        and person.role != "Manager"
+        and name in {s.casefold() for s in task.supporters}
+    ):  # section 25: Support updates progress; review and done are the Doer's
+        return [(tap_id("upd", task.id), "Update progres"), (tap_id("more", task.id), "Lainnya")]
     second = (
         (tap_id("rev", task.id), "Kirim review")
         if task.review_needed and task.status != "Approved"
@@ -188,7 +197,8 @@ def card_buttons(
 
 
 def my_tasks(person: StaffMember, tasks: list[Task], staff: list[StaffMember]) -> list[Task]:
-    """Open tasks the person is Doer or Owner of, or reviews (In Review); earliest due first."""
+    """Open tasks the person is Doer, Owner or Support of (section 25), or reviews (In
+    Review); earliest due first."""
     name = person.name.casefold()
     found = []
     for task in tasks:
@@ -200,7 +210,8 @@ def my_tasks(person: StaffMember, tasks: list[Task], staff: list[StaffMember]) -
             and reviewer is not None
             and (reviewer.name.casefold() == name)
         )
-        if name in (task.doer.casefold(), task.owner.casefold()) or reviews:
+        supports = name in {s.casefold() for s in task.supporters}
+        if name in (task.doer.casefold(), task.owner.casefold()) or reviews or supports:
             found.append(task)
     return sorted(found, key=lambda t: (t.due_date is None, t.due_date or date.max, t.id))
 
@@ -314,9 +325,11 @@ def handle_tap(message: Any, person: StaffMember, ctx: Any, now: datetime) -> st
                                       rows, "Lainnya")  # fmt: skip
         _record(ctx.store, message_id, person, [task_id], "list")
         return "tap_more"
+    if action == "acc":  # section 23: Terima
+        return _finish(ctx, person, message, Command("accept", task_id))
     steps: dict[str, ConversationStep] = {
         "blk": "blocked_reason", "ext": "extension_date", "done": "done_proof",
-        "rev": "review_file", "ret": "return_notes",
+        "rev": "review_file", "ret": "return_notes", "dec": "decline_reason",
     }  # fmt: skip
     if action in steps:
         task = next((t for t in ctx.store.tasks() if t.id == task_id), None)
@@ -381,6 +394,8 @@ def handle_answer(
         return _finish(ctx, person, message, Command("extension", task_id, text))
     if step == "return_notes" and text:
         return _finish(ctx, person, message, Command("return", task_id, text))
+    if step == "decline_reason" and text:
+        return _finish(ctx, person, message, Command("decline", task_id, text))
     if step == "done_proof" and files:
         return _finish(ctx, person, message, Command("done", task_id), files)
     if step == "review_file" and (files or text.lower() in NO_FILE_WORDS):
@@ -457,6 +472,17 @@ def _notice(event: str, task: Task, note: str, staff: list[StaffMember]
                         (tap_id("exty", task.id, iso), "Setuju"),
                         (tap_id("extn", task.id, iso), "Tolak"),
                     ],
+                )
+            )
+    elif event == "declined":
+        for manager in managers(staff):
+            out.append(
+                (
+                    manager,
+                    f"{task.doer or 'Assignee'} menolak {task.id} – {task.title}: "
+                    f"{note or '-'}. Kirim 'assign {task.id} to <nama>' untuk "
+                    "menyerahkan ke orang lain.",
+                    [],
                 )
             )
     elif event in ("extension_approved", "extension_rejected") and doer is not None:

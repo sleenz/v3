@@ -99,6 +99,20 @@ recommended). Built in three PRs, one at a time on the same branch:
 
 WhatsApp is not live yet: `WA_ACCESS_TOKEN` and `WA_APP_SECRET` have no value saved.
 
+## 4b. v1.5: more responsive bot (approved 16 Nov 2026)
+
+The user asked for four things, built in four phases, one PR each:
+1. **Phase 1 (built, DESIGN section 23):** accepting an assignment. It applies only to a
+   Manager's PROMPT. The Doer is asked Yes/No. Yes → Not Started and the files follow. No →
+   back to the Manager.
+2. **Phase 2 (built, DESIGN section 24):** updates by any email to the bot (not only replies), `status G-0012`, and
+   confirmations that show before → after.
+3. **Phase 3 (built, DESIGN section 25):** multi-person tasks: one Doer plus a `Support` column (`;`-separated). In a
+   PROMPT, the first name is the Doer and the rest are Support. Supporters are cc'd and can
+   update progress, but only the Doer reviews or marks Done.
+4. **Phase 4:** three QA subagents write fake-based scenario tests (assignment journeys,
+   updates by email and WhatsApp, multi-person and edge cases), report, then fix.
+
 ## 5. Things learned the hard way (troubleshooting)
 
 `docs/SETUP_GUIDE.md` has the full table. The key ones:

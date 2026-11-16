@@ -124,10 +124,51 @@ Config `AI provider` = `Gemini API key`. Use a test task you own (O1–O6 on Wha
 
 | # | Do this | Expected |
 |---|---------|----------|
-| O1 | Reply to a task card: "udah 70% tinggal nunggu data finance". | "Progress G-… → 70% Benar?" with Ya / Ubah / Batal. Nothing changes until **Ya**; then Progress 70 %. Log line `ai_reply_call` with `prompt_version` reply_v1, a confidence and `fallback` false (no text). |
+| O1 | Reply to a task card: "udah 70% tinggal nunggu data finance". | "Progress G-…: <now>% → 70% Benar?" with Ya / Ubah / Batal. Nothing changes until **Ya**; then Progress 70 %. Log line `ai_reply_call` with `prompt_version` reply_v1, a confidence and `fallback` false (no text). |
 | O2 | "minta mundur ke 20 Nov", then **Batal**. | Nothing changes; no ProgressLog row. |
 | O3 | "kapan deadline G-…?" | The due date, status and progress straight from the sheet; no buttons. |
 | O4 | With two open tasks: "udah setengah jalan" (not a reply to anything). | A list "Tugas yang mana?" of your tasks. |
 | O5 | Paste a new request text (not a reply, not forwarded). | Logged as a new request 30 s later (Gemini said `request`). |
-| O6 | Set `AI provider` to `Off`; send `G-… 40`. | Still "Progress G-… → 40% Benar?" (the rules took over). Set it back. |
-| O7 | Reply to a reminder email: "still stuck, waiting for finance". Then reply `YES`. | First an email "Reply YES to confirm … terhambat (On Hold)"; after YES, Status On Hold. |
+| O6 | Set `AI provider` to `Off`; send `G-… 40`. | Still "Progress G-…: <now>% → 40% Benar?" (the rules took over). Set it back. |
+| O7 | Reply to a reminder email: "still stuck, waiting for finance". Then reply `YES`. | First an email "Reply YES to confirm … Status G-…: In Progress → On Hold (terhambat)"; after YES, Status On Hold. |
+
+## Accepting an assignment (DESIGN section 23)
+
+Needs the `Acceptance` column in Master. A1–A5 use email. A6–A7 need WhatsApp live and
+`grc_tugas_baru` approved. You need two Staff mailboxes: a Manager (M) and a staff member (S).
+
+| # | Do this | Expected |
+|---|---------|----------|
+| A1 | From M, email a request whose first line is `PROMPT: assign this to <S>`, with a PDF. | The reply says "waiting for <S> to accept". The row reads Proposed, Acceptance Pending. |
+| A2 | Wait up to 2 minutes (working hours). | S gets "[GRC] G-… – please accept", which has the Files link but no attachment. Exactly one, even after more runs. |
+| A3 | From S, reply `Yes` in that thread. | The reply says "G-… is yours". Status Not Started, Acceptance Accepted. Within 2 minutes the assignment email arrives with the PDF. |
+| A4 | Repeat A1–A2, then S replies "No, I am on leave". | Status stays Proposed, Acceptance Declined, Flag "Declined by <S>: I am on leave". M gets an email with the reason. |
+| A5 | From M, reply `assign G-… to <another person>`, then `YES`. | Acceptance Pending again, the flag is gone, and the new person gets "please accept". |
+| A6 | Repeat A1 with S on WhatsApp. | S gets the Terima / Tolak buttons (or the template, if S has not written in 24 h). **Terima** → Not Started. |
+| A7 | Repeat A1, then tap **Tolak**. | The bot asks why; type a reason. You see the same result as A4, and the Manager is told. |
+
+## Updates by any email and status (DESIGN section 24)
+
+Use a test task you are the Doer of (call it G-x). U3 and U4 need `AI provider` = Gemini.
+
+| # | Do this | Expected |
+|---|---------|----------|
+| U1 | Send a **new** email to the bot (not a reply): `status G-x`. | The reply has the due date and days left, status, progress and Doer. Nothing changes. |
+| U2 | New email: `G-x 60`. | "Reply YES to confirm: Progress G-x: <now>% → 60%". After **YES**, Progress is 60 %. |
+| U3 | New email, no ID: "the <task title> is almost done, 90%". | The same confirmation for 90 %, with "Reply NO if this is a new request instead". Your email stays in the inbox until you answer. |
+| U4 | Repeat U3, then reply **NO**. | "Logged your email as a new request: G-…": a new row, and G-x is unchanged. |
+| U5 | Forward any email to the bot with "G-x" in it. | Logged as a new request, never read as an update. |
+| U6 | On WhatsApp: `how is G-x?` | The same status text as U1. |
+
+## Several people on one task (DESIGN section 25)
+
+You need the Manager (M) and two staff members (S1, S2).
+
+| # | Do this | Expected |
+|---|---------|----------|
+| T1 | From M, email a request with `PROMPT: assign this to <S1> and <S2>` and a PDF. | The row has Doer S1 and Support S2. Only S1 is asked to accept (if `Acceptance` exists). |
+| T2 | S1 accepts. Wait up to 2 minutes. | The assignment email goes to S1, cc S2, with the PDF. It lists Doer, Support and who does what. |
+| T3 | From S2, reply in that thread `G-… 40`, then `YES`. | Progress is 40 %. |
+| T4 | From S2: `done G-…` with a file. | "only <S1> can do that". Nothing changes. |
+| T5 | From M: `assign G-… to <S2> and <S1>`, then `YES`. | Doer S2, Support S1. |
+| T6 | On the due date, at 14:00. | The due-today reminder reaches S1 and S2. |

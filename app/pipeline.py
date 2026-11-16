@@ -29,10 +29,13 @@ from app.extract.clean import (
 from app.models import AuditEntry, Contact, RawRequest, StaffMember, Task, TaskResult
 from app.route import (
     fuzzy_staff_name,
+    joined_groups,
     match_staff_name,
     route,
     sender_assignment,
+    split_team,
     staff_mentioned,
+    supporters_for,
 )
 from app.sheets import SheetStore
 
@@ -51,9 +54,19 @@ class Services:
     ai: AIProvider
 
 
+def next_step(task: Task) -> str:
+    """What happens next, for the reply to the sender."""
+    if task.awaiting_acceptance:
+        return f"Assigned by the manager; waiting for {task.doer} to accept."
+    if task.status != "Proposed":
+        return f"Assigned by the manager to {task.doer}; started."
+    return "Waiting for manager approval."
+
+
 def _result(task: Task, created: bool, due_from_prompt: bool = False) -> TaskResult:
     return TaskResult(
         due_from_prompt=due_from_prompt,
+        next_step=next_step(task),
         task_id=task.id,
         created=created,
         title=task.title,
@@ -125,6 +138,13 @@ def rules_owner(
     if not asked.assign_to and not sender_prompt.wants_assignment(prompt):
         return OwnerChoice()
     if asked.assign_to:
+        parts = split_team(asked.assign_to)
+        if parts:  # "cia and enzo" (section 25): the first is the Doer, never the next one
+            person, corrected = staff_match(parts[0], staff)
+            if person is None:
+                return OwnerChoice(None, [f'PROMPT: "{parts[0]}" not found in Staff'])
+            note = [f'PROMPT: "{parts[0]}" read as {person.name}'] if corrected else []
+            return OwnerChoice(person.name, note)
         person, corrected = staff_match(asked.assign_to, staff)
         if person is not None:
             note = [f'PROMPT: "{asked.assign_to}" read as {person.name}'] if corrected else []
@@ -135,6 +155,13 @@ def rules_owner(
     ]
     if len(named) == 1:
         return OwnerChoice(named[0].name)
+    # "assign to cia and enzo" (section 25): one group of names joined by "and" is the Doer
+    # (the first) and Support; names joined by "or" stay unclear.
+    groups = joined_groups(sender_prompt.without_reviewer(prompt), staff)
+    teams = [[p for p in g if p != reviewer] for g in groups]
+    teams = [g for g in teams if len(g) >= 2]
+    if len(teams) == 1:
+        return OwnerChoice(teams[0][0].name)
     if asked.assign_to:
         return OwnerChoice(None, [f'PROMPT: "{asked.assign_to}" not found in Staff'])
     return OwnerChoice(None, ["PROMPT: couldn't read who to assign"])
@@ -151,6 +178,7 @@ class PromptDecision:
     reviewer: str | None = None
     due: date | None = None
     flags: list[str] = field(default_factory=list)
+    support: list[str] = field(default_factory=list)  # section 25: named with the owner
 
 
 def decide_prompt(
@@ -215,9 +243,34 @@ def decide_prompt(
         due = ai_due
         used_ai = True
 
+    # Support (section 25): the others named together with the owner, by rules only.
+    support: list[str] = []
+    parts = split_team(asked.assign_to) if asked.assign_to else None
+    if owner and parts:
+        for part in parts:  # the owner may be any of them when the AI chose (section 21)
+            helper, corrected = staff_match(part, staff)
+            if helper is None:
+                if part != parts[0]:  # the first one's flag comes from the owner rules
+                    flags.append(f'PROMPT: support "{part}" not found in Staff')
+            elif helper.name not in (owner, reviewer, *support):
+                support.append(helper.name)
+                if corrected:
+                    flags.append(f'PROMPT: support "{part}" read as {helper.name}')
+    elif owner:
+        support = supporters_for(
+            sender_prompt.without_reviewer(prompt), owner, [reviewer or ""], staff
+        )
+
     if used_ai:
         flags.insert(0, AI_READ_FLAG)
-    return PromptDecision(owner, reviewer, due, list(dict.fromkeys(flags)))
+    return PromptDecision(owner, reviewer, due, list(dict.fromkeys(flags)), support)
+
+
+def _staff_member(store: SheetStore, email: str) -> StaffMember | None:
+    wanted = email.strip().lower()
+    if not wanted:
+        return None
+    return next((p for p in store.staff() if p.email.strip().lower() == wanted), None)
 
 
 def _is_staff(store: SheetStore, email: str) -> bool:
@@ -408,6 +461,26 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
     if note:
         notes = "\n".join(part for part in (notes, f"Sender's PROMPT: {note}") if part)
     source = raw.source_id if raw.source == "Recurring" else raw.source
+    # Section 23: a Manager's PROMPT that names the owner is the approval; the Doer is asked to
+    # accept (or it starts at once when the Manager names themselves). Needs the Master column
+    # `Acceptance`; without it the task waits for approval as before.
+    status, acceptance = "Proposed", ""
+    sender = _staff_member(store, raw.sender_email)
+    doer_name = routed.doer or routed.owner or ""
+    if (
+        note
+        and decision.owner
+        and doer_name
+        and sender is not None
+        and sender.role == "Manager"
+        and "Acceptance" in store.master_header()
+    ):
+        if doer_name.casefold() == sender.name.casefold():
+            status, acceptance = "Not Started", "Accepted"
+        else:
+            acceptance = "Pending"
+    team = {routed.owner or "", doer_name} if note and decision.owner else set()
+    support = [name for name in decision.support if name not in team] if team else []
     task = Task(
         title=title,
         catalog_id=routed.catalog_id or "",
@@ -415,11 +488,13 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
         requester=requester or "",
         owner=routed.owner or "",
         doer=routed.doer or routed.owner or "",
+        support="; ".join(support),
         letter_no=letter.letter_no if letter else "",
         letter_code=letter.letter_code if letter else "",
         start=raw.received_at.astimezone(clock.TZ).date(),
         due_date=due_date,
-        status="Proposed",
+        status=status,
+        acceptance=acceptance,
         last_updated=clock.now(),
         notes=notes,
         flag="; ".join(dict.fromkeys(flags)),

@@ -560,23 +560,72 @@ def _thread_reply(
 
 
 def _propose_by_email(
-    gmail: GmailClient, store: Any, message: GmailMessage, person: Any, command: Any
+    gmail: GmailClient,
+    store: Any,
+    message: GmailMessage,
+    person: Any,
+    command: Any,
+    intake: bool = False,
 ) -> None:
-    """A typed change waits for YES (DESIGN section 22, decision 2): nothing is written now."""
+    """A typed change waits for YES (DESIGN section 22, decision 2): nothing is written now.
+    `intake`: the message was a new email, not a reply (section 24); NO then logs it."""
     from app import replies
 
     files = _real_files(message)
     task = next((t for t in store.tasks() if t.id == command.task_id), None)
     pending = replies.Pending(command.name, command.task_id, command.value, message.id,
-                              email_id=message.id if files else "")  # fmt: skip
+                              email_id=message.id if files else "", intake=intake)  # fmt: skip
     summary = replies.describe(command, task, [f.filename for f in files])
     if replies.propose(store, person.name, "Email", pending, clock.now()):
+        cancel = (
+            "Reply NO if this is a new request instead: it is then logged as one."
+            if intake
+            else "Reply NO to cancel."
+        )
         text = (f"Reply YES to confirm (nothing has changed yet):\n  {summary}\n\n"
-                "Reply NO to cancel. This waits 30 minutes.")  # fmt: skip
+                f"{cancel} This waits 30 minutes.")  # fmt: skip
     else:
         text = "I can't hold this for your confirmation (the sheet has no _conversations tab "
         text += "yet). Nothing changed; ask the manager to run installServiceTabs()."
     _thread_reply(gmail, store, message, text, person.name, command.task_id or "", "confirm")
+
+
+def _acceptance_reply(
+    gmail: GmailClient, services: Services, message: GmailMessage, sheet_url: str
+) -> bool:
+    """YES / NO in the thread of a "please accept" email (DESIGN section 23). False: not such a
+    reply, or not a yes/no (then it is handled as any other reply)."""
+    from app import acceptance
+    from app.commands import Command
+    from app.lifecycle import CommandContext, run_command
+
+    store = services.store
+    task_id = acceptance.thread_task(store, message.thread_id)
+    person = _staff_sender(store, message) if task_id else None
+    if person is None:
+        return False
+    task = next((t for t in store.tasks() if t.id == task_id), None)
+    if task is None or not acceptance.pending(task):
+        return False
+    answer = acceptance.answer_in(strip_noise(message.body_text) or message.body_text)
+    if answer is None and person.name.casefold() == task.doer.strip().casefold():
+        hint = (f"I couldn't tell if that is a yes or a no. Reply YES to accept {task_id}, or "
+                "NO and the reason if you cannot take it.")  # fmt: skip
+        _thread_reply(gmail, store, message, hint, person.name, task_id or "", "reply")
+        _modify(gmail, message.id, [REPLY_LABEL], [UNREAD, INBOX])
+        return True
+    if answer is None:
+        return False
+    name, reason = answer
+    result = run_command(
+        Command(name, task_id, reason),  # type: ignore[arg-type]
+        CommandContext(store=store, gmail=gmail, actor=person, channel="Email",
+                       sheet_url=sheet_url, context_task_id=task_id, message_id=message.id),
+    )  # fmt: skip
+    _thread_reply(gmail, store, message, result.reply, person.name, task_id or "", "command")
+    _modify(gmail, message.id, [COMMAND_LABEL], [UNREAD, INBOX])
+    logger.info("acceptance_answer", extra={"task_id": task_id, "kind": name})
+    return True
 
 
 def _email_confirmation(
@@ -591,13 +640,23 @@ def _email_confirmation(
     person = _staff_sender(store, message)
     if person is None:
         return False
+    first = next((line for line in strip_noise(message.body_text).splitlines() if line.strip()), "")
     convo = replies.pending_confirm(store, person.name, "Email", clock.now())
     if convo is None:
-        return False
-    first = next((line for line in strip_noise(message.body_text).splitlines() if line.strip()), "")
-    replies.drop_confirm(store, person.name)
+        return _late_answer(gmail, services, message, person, first)
     pending = replies.Pending.load(convo.value)
-    if replies.is_no(first):
+    if not (replies.is_no(first) or replies.is_yes(first)):
+        replies.drop_confirm(store, person.name)  # anything else drops the question
+        return False
+    # The question is dropped only once its answer has been acted on, so a failure here is
+    # retried with the question still open (D15, QA-B4).
+    if replies.is_no(first) and pending.intake:
+        original = gmail.get_message(pending.message_id)
+        result = _log_request(gmail, services, original)
+        _thread_reply(gmail, store, message, f"Nothing changed on {pending.task_id}. Logged "
+                      f"your email as a new request: {result.task_id}.", person.name,
+                      result.task_id or "", "command")  # fmt: skip
+    elif replies.is_no(first):
         _thread_reply(gmail, store, message, "Cancelled. Nothing changed.", person.name,
                       pending.task_id or "", "command")  # fmt: skip
     elif replies.is_yes(first):
@@ -617,12 +676,43 @@ def _email_confirmation(
         )  # fmt: skip
         _thread_reply(gmail, store, message, result.reply, person.name, result.task_id or "",
                       "command", result.attachments)  # fmt: skip
+        if pending.intake:  # the new email that asked for it was left in the inbox
+            _modify(gmail, pending.message_id, [], [INBOX])
         logger.info(
             "email_confirmed", extra={"kind": pending.name, "n_changed": int(result.changed)}
         )
-    else:
-        return False
+    replies.drop_confirm(store, person.name)
     _modify(gmail, message.id, [COMMAND_LABEL], [UNREAD, INBOX])
+    return True
+
+
+def _late_answer(
+    gmail: GmailClient, services: Services, message: GmailMessage, person: Any, first: str
+) -> bool:
+    """YES / NO after the 30 minutes (QA-B2): say so instead of filing it in Notes. A late NO
+    to a new email read as an update still logs that email as a request (D15)."""
+    from app import replies
+
+    store = services.store
+    old = replies.expired_confirm(store, person.name, "Email", clock.now())
+    if old is None or not (replies.is_yes(first) or replies.is_no(first)):
+        return False
+    pending = replies.Pending.load(old.value)
+    if replies.is_no(first) and pending.intake:
+        result = _log_request(gmail, services, gmail.get_message(pending.message_id))
+        text = f"Nothing changed on {pending.task_id}. Logged your email as a new request: "
+        text += f"{result.task_id}."
+    else:
+        text = (
+            f"That question expired after {replies.CONFIRM_MINUTES} minutes, so nothing "
+            f"changed on {pending.task_id}. Send the update again if you still want it."
+        )
+        if pending.intake:
+            _modify(gmail, pending.message_id, [], [INBOX])
+    replies.drop_confirm(store, person.name)
+    _thread_reply(gmail, store, message, text, person.name, pending.task_id or "", "command")
+    _modify(gmail, message.id, [COMMAND_LABEL], [UNREAD, INBOX])
+    logger.info("email_confirm_late", extra={"kind": pending.name})
     return True
 
 
@@ -639,60 +729,15 @@ def _outbox_reply(
     """A reply in a thread the bot started (reminder, notice): read by the AI first, the rules
     as fallback (DESIGN section 22, part C); a change waits for YES. Nothing understood: added
     to the Notes of its one task, or answered with how to update. False: not such a thread."""
-    from app import replies
-    from app.lifecycle import CommandContext, run_command
-    from app.wa_ui import my_tasks
 
     store = services.store
     if not outbox.by_thread(store, message.thread_id):
         return False
     task_id = outbox.thread_task(store, message.thread_id)
     person = _staff_sender(store, message)
-    if person is not None:
-        text = strip_noise(message.body_text) or message.body_text
-        all_tasks = [t for t in store.tasks() if t.id]
-        staff = store.staff()
-        mine = my_tasks(person, all_tasks, staff)
-        config = store.config()
-        today = clock.today()
-        understood = replies.understand(
-            text, person, mine, task_id, services.ai, config.ai_provider != "Off",
-            config.mask_emails_for_ai, today, has_files=bool(_real_files(message)),
-        )  # fmt: skip
-        kind, command = understood.kind, understood.command
-        if kind == "change" and command is not None and replies.needs_confirmation(command):
-            _propose_by_email(gmail, store, message, person, command)
-            _modify(gmail, message.id, [COMMAND_LABEL], [UNREAD, INBOX])
-            return True
-        if kind in ("change", "now") and command is not None:
-            result = run_command(command, CommandContext(
-                store=store, gmail=gmail, actor=person, channel="Email", sheet_url=sheet_url,
-                files=_real_files(message), context_task_id=command.task_id or task_id,
-                message_id=message.id))  # fmt: skip
-            _thread_reply(gmail, store, message, result.reply, person.name,
-                          result.task_id or "", "command", result.attachments)  # fmt: skip
-            _modify(gmail, message.id, [COMMAND_LABEL], [UNREAD, INBOX])
-            return True
-        answer = ""
-        if kind == "question":
-            task = next((t for t in all_tasks if t.id == understood.task_id), None)
-            answer = replies.answer(task, staff, today)
-        elif kind in ("list", "pick"):
-            lines = [f"• {t.id} – {t.title} (due {t.due_date:%d %b})" if t.due_date
-                     else f"• {t.id} – {t.title}" for t in mine]  # fmt: skip
-            head = "Which task? Reply with its ID." if kind == "pick" else "Your open tasks:"
-            answer = "\n".join([head, *lines]) if lines else "You have no open tasks."
-        elif kind == "ask":
-            answer = ASK_BY_EMAIL.get(understood.step, REMINDER_HELP).format(
-                task=understood.task_id or "G-0012"
-            )
-        elif kind == "help":
-            answer = REMINDER_HELP
-        if answer:
-            _thread_reply(gmail, store, message, answer, person.name, understood.task_id or "",
-                          "reply")  # fmt: skip
-            _modify(gmail, message.id, [REPLY_LABEL], [UNREAD, INBOX])
-            return True
+    if person is not None and _understood_email(gmail, services, message, person, task_id,
+                                                sheet_url):  # fmt: skip
+        return True
     _modify(gmail, message.id, [REPLY_LABEL], [UNREAD, INBOX])
     task = next((t for t in store.tasks() if t.id == task_id), None) if task_id else None
     if task is not None:
@@ -702,6 +747,160 @@ def _outbox_reply(
     _thread_reply(gmail, store, message, REMINDER_HELP, person.name if person else "",
                   task_id or "", "reply")  # fmt: skip
     return True
+
+
+def _understood_email(
+    gmail: GmailClient,
+    services: Services,
+    message: GmailMessage,
+    person: Any,
+    task_id: str | None,
+    sheet_url: str,
+    new_email: bool = False,
+) -> bool:
+    """Read a Staff member's email as an update (AI first, rules as fallback, section 22 C) and
+    act on it: a change waits for YES, a read is answered at once. False: nothing understood,
+    or (for a new email, section 24) not clearly about one of the tasks, so it stays intake."""
+    from app import replies
+    from app.lifecycle import CommandContext, run_command
+    from app.wa_ui import my_tasks
+
+    store = services.store
+    text = strip_noise(message.body_text) or message.body_text
+    all_tasks = [t for t in store.tasks() if t.id]
+    staff = store.staff()
+    mine = my_tasks(person, all_tasks, staff)
+    config = store.config()
+    today = clock.today()
+    understood = replies.understand(
+        text, person, mine, task_id, services.ai, config.ai_provider != "Off",
+        config.mask_emails_for_ai, today, has_files=bool(_real_files(message)),
+    )  # fmt: skip
+    kind, command = understood.kind, understood.command
+    if kind in ("nothing", "request"):
+        return False
+    if new_email and task_id is None:
+        # no task ID typed: only the AI naming one of the person's own tasks counts
+        if kind not in ("change", "ask", "question") or understood.via != "ai":
+            return False
+        if understood.guessed or understood.task_id not in {t.id for t in mine}:
+            return False
+    keep = [] if new_email else [INBOX]  # a new email stays in the inbox until YES / NO
+    if kind == "change" and command is not None and replies.needs_confirmation(command):
+        _propose_by_email(gmail, store, message, person, command, intake=new_email)
+        _modify(gmail, message.id, [COMMAND_LABEL], [UNREAD, *keep])
+        logger.info("email_update_proposed", extra={"kind": command.name, "new": new_email})
+        return True
+    if kind in ("change", "now") and command is not None:
+        result = run_command(command, CommandContext(
+            store=store, gmail=gmail, actor=person, channel="Email", sheet_url=sheet_url,
+            files=_real_files(message), context_task_id=command.task_id or task_id,
+            message_id=message.id))  # fmt: skip
+        _thread_reply(gmail, store, message, result.reply, person.name,
+                      result.task_id or "", "command", result.attachments)  # fmt: skip
+        _modify(gmail, message.id, [COMMAND_LABEL], [UNREAD, INBOX])
+        return True
+    answer = ""
+    if kind == "question":
+        task = next((t for t in all_tasks if t.id == understood.task_id), None)
+        answer = replies.answer(task, staff, today)
+    elif kind in ("list", "pick"):
+        lines = [f"• {t.id} – {t.title} (due {t.due_date:%d %b})" if t.due_date
+                 else f"• {t.id} – {t.title}" for t in mine]  # fmt: skip
+        head = "Which task? Reply with its ID." if kind == "pick" else "Your open tasks:"
+        answer = "\n".join([head, *lines]) if lines else "You have no open tasks."
+    elif kind == "ask":
+        answer = ASK_BY_EMAIL.get(understood.step, REMINDER_HELP).format(
+            task=understood.task_id or "G-0012"
+        )
+    elif kind == "help":
+        answer = REMINDER_HELP
+    if not answer:
+        return False
+    _thread_reply(gmail, store, message, answer, person.name, understood.task_id or "",
+                  "reply")  # fmt: skip
+    _modify(gmail, message.id, [REPLY_LABEL], [UNREAD, INBOX])
+    return True
+
+
+_FORWARD_SUBJECT = re.compile(r"^\s*(?:fwd?|fw|tr|wg)\s*:", re.IGNORECASE)
+
+
+def _may_be_update(message: GmailMessage) -> bool:
+    """False for mail that is always a request: forwarded, or with a PROMPT line (s. 24)."""
+    from app.extract import prompt as sender_prompt
+    from app.extract.clean import looks_forwarded
+
+    if _FORWARD_SUBJECT.match(message.subject or "") or looks_forwarded(message.body_text):
+        return False
+    found, _ = sender_prompt.split_prompt_lines(message.body_text or "")
+    return not found
+
+
+def _staff_update(
+    gmail: GmailClient, services: Services, message: GmailMessage, sheet_url: str
+) -> bool:
+    """A new email (not a reply) from a Staff member with open tasks, about one of them
+    (DESIGN section 24): "G-0012 is at 70%, waiting for finance", or with the AI on, "the
+    stress test report is half done". False: a request, so it is logged as before.
+
+    Never read as an update: forwarded mail, a PROMPT line, attachments without a task ID, or
+    without a task ID: attachments, a person with no open tasks, or the AI off."""
+    from app.commands import task_ids_in
+    from app.wa_ui import my_tasks
+
+    store = services.store
+    person = _staff_sender(store, message)
+    if person is None:
+        return False
+    if not _may_be_update(message):
+        return False
+    all_tasks = [t for t in store.tasks() if t.id]
+    known = {t.id for t in all_tasks}
+    text = f"{message.subject or ''}\n{strip_noise(message.body_text) or ''}"
+    named = [i for i in task_ids_in(text) if i in known]
+    if len(named) > 1:  # about two tasks, not one (QA-B6): a request, as before
+        return False
+    task_id = named[0] if named else None
+    if task_id is None and (
+        _real_files(message)
+        or store.config().ai_provider == "Off"
+        or not my_tasks(person, all_tasks, store.staff())
+    ):
+        return False
+    return _understood_email(gmail, services, message, person, task_id, sheet_url,
+                             new_email=True)  # fmt: skip
+
+
+def _raw_request(message: GmailMessage) -> RawRequest:
+    return RawRequest(
+        source="Email",
+        source_id=message.id,
+        received_at=message.received_at,
+        subject=message.subject,
+        body_text=message.body_text,
+        body_html=message.body_html,
+        sender_name=message.sender_name,
+        sender_email=message.sender_email,
+        attachments=message.attachments,
+        submitted_by=message.sender_email,
+    )
+
+
+def _log_request(gmail: GmailClient, services: Services, message: GmailMessage) -> Any:
+    """Log an email as a request after the person said it is not an update (section 24):
+    the row first, then the acknowledgement and the label (D15)."""
+    result = process_request(_raw_request(message), services)
+    try:
+        gmail.reply(message, acknowledgement_email(result, message),
+                    services.store.config().sender_name)  # fmt: skip
+    except GmailAuthError:
+        raise
+    except Exception as error:
+        logger.error("ack_failed", extra={"task_id": result.task_id,
+                                          "error_type": type(error).__name__})  # fmt: skip
+    _modify(gmail, message.id, [LOGGED_LABEL], [COMMAND_LABEL, UNREAD, INBOX])
+    return result
 
 
 def _ignore_reason(message: GmailMessage, bot: str, config: AppConfig) -> str:
@@ -741,17 +940,23 @@ def _email_command(
     if context is None:  # a reply to a reminder or notice about one task (section 22)
         context = outbox.thread_task(store, message.thread_id)
     text = strip_noise(message.body_text) or message.body_text
+    new_email = context is None  # not a reply to anything the bot knows (section 24)
+    if new_email and not _may_be_update(message):
+        return False  # forwarded mail or a PROMPT line is always a request (QA-B1)
     command = parse_command(text, has_context=context is not None)
     if command is None:
         return False
     from app.commands import Command
     from app.lifecycle import CHANGES
 
-    if command.name in CHANGES:  # a typed change waits for YES (section 22, decision 2)
+    if command.name in CHANGES and command.name not in ("accept", "decline"):
+        # a typed change waits for YES (section 22, decision 2); accept/decline is the answer.
+        # From a new email, NO logs it as a request and it stays in the inbox until answered.
         task_id = command.task_id or context
         _propose_by_email(gmail, store, message, person,
-                          Command(command.name, task_id, command.value))  # fmt: skip
-        _modify(gmail, message.id, [COMMAND_LABEL], [UNREAD, INBOX])
+                          Command(command.name, task_id, command.value),
+                          intake=new_email)  # fmt: skip
+        _modify(gmail, message.id, [COMMAND_LABEL], [UNREAD] if new_email else [UNREAD, INBOX])
         logger.info("email_command", extra={"kind": command.name, "n_changed": 0})
         return True
     files = _real_files(message)
@@ -851,6 +1056,9 @@ def process_inbox(
                 continue
             logged = [i for i in gmail.logged_message_ids(message.thread_id) if i != message.id]
             fresh = services.store.task_by_source_id(message.id) is None
+            if fresh and _acceptance_reply(gmail, services, message, sheet_url):
+                run.commands += 1  # YES / NO to "please accept" (section 23)
+                continue
             if fresh and _email_confirmation(gmail, services, message, sheet_url):
                 run.commands += 1  # YES / NO to a proposed change (section 22)
                 continue
@@ -860,25 +1068,16 @@ def process_inbox(
             if fresh and _email_command(gmail, services, message, logged, sheet_url):
                 run.commands += 1
                 continue
+            if fresh and not logged and _staff_update(gmail, services, message, sheet_url):
+                run.commands += 1  # a new email about an open task (section 24)
+                continue
             if logged and services.store.task_by_source_id(message.id) is None:
                 _note_reply(services, message, logged)
                 _modify(gmail, message.id, [REPLY_LABEL], [UNREAD, INBOX])
                 run.replies += 1
                 continue
 
-            raw = RawRequest(
-                source="Email",
-                source_id=message.id,
-                received_at=message.received_at,
-                subject=message.subject,
-                body_text=message.body_text,
-                body_html=message.body_html,
-                sender_name=message.sender_name,
-                sender_email=message.sender_email,
-                attachments=message.attachments,
-                submitted_by=message.sender_email,
-            )
-            result = process_request(raw, services)
+            result = process_request(_raw_request(message), services)
         except (GmailAuthError, SchemaError):
             raise
         except Exception as error:
