@@ -18,7 +18,6 @@ CommandName = Literal[
     # v1.4 part 2 (DESIGN section 22)
     "blocked", "extension", "extension_ok", "extension_no", "snooze", "undo",
     "note",  # part C: information added to Notes
-    "accept", "decline",  # section 23: the assignee answers a Manager's assignment
     "status",  # section 24: one task's state, read from the Sheet
 ]  # fmt: skip
 
@@ -48,8 +47,6 @@ _TASK_VERBS: dict[str, CommandName] = {
     "snooze": "snooze", "tunda": "snooze", "ingatkan besok": "snooze", "besok aja": "snooze",
     "undo": "undo", "batalkan": "undo",
     "note": "note", "catatan": "note",
-    "accept": "accept", "terima": "accept", "terima tugas": "accept",
-    "decline": "decline", "tolak tugas": "decline",
     "status": "status", "how is": "status", "how's": "status", "gimana": "status",
     "bagaimana": "status", "cek status": "status", "status tugas": "status",
 }  # fmt: skip
@@ -141,11 +138,9 @@ def parse_command(text: str, has_context: bool = False) -> Command | None:
             if not number:
                 return None
             return Command("progress", found, number.group(1).replace(",", "."))
-        bare_only = ("approve", "files", "done", "review", "accept", "status")
+        bare_only = ("approve", "files", "done", "review", "status")
         if name in bare_only and rest and not found:
             return None  # "cek laporan ini dulu", "terima kasih": not bare commands
-        if name == "accept" and rest.strip():
-            return None  # "terima G-0012 kasih": accept is the ID alone
         return Command(name, found, rest.strip())
     return None
 

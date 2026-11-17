@@ -132,20 +132,19 @@ Config `AI provider` = `Gemini API key`. Use a test task you own (O1–O6 on Wha
 | O6 | Set `AI provider` to `Off`; send `G-… 40`. | Still "Progress G-…: <now>% → 40% Benar?" (the rules took over). Set it back. |
 | O7 | Reply to a reminder email: "still stuck, waiting for finance". Then reply `YES`. | First an email "Reply YES to confirm … Status G-…: In Progress → On Hold (terhambat)"; after YES, Status On Hold. |
 
-## Accepting an assignment (DESIGN section 23)
+## Assignments by PROMPT (DESIGN section 26)
 
-Needs the `Acceptance` column in Master. A1–A5 use email. A6–A7 need WhatsApp live and
-`grc_tugas_baru` approved. You need two Staff mailboxes: a Manager (M) and a staff member (S).
+You need the Manager (M), a full-time staff member (F), an intern who reports to F (I) and
+another staff member (S). All by email; S1-S2 also work on WhatsApp.
 
 | # | Do this | Expected |
 |---|---------|----------|
-| A1 | From M, email a request whose first line is `PROMPT: assign this to <S>`, with a PDF. | The reply says "waiting for <S> to accept". The row reads Proposed, Acceptance Pending. |
-| A2 | Wait up to 2 minutes (working hours). | S gets "[GRC] G-… – please accept", which has the Files link but no attachment. Exactly one, even after more runs. |
-| A3 | From S, reply `Yes` in that thread. | The reply says "G-… is yours". Status Not Started, Acceptance Accepted. Within 2 minutes the assignment email arrives with the PDF. |
-| A4 | Repeat A1–A2, then S replies "No, I am on leave". | Status stays Proposed, Acceptance Declined, Flag "Declined by <S>: I am on leave". M gets an email with the reason. |
-| A5 | From M, reply `assign G-… to <another person>`, then `YES`. | Acceptance Pending again, the flag is gone, and the new person gets "please accept". |
-| A6 | Repeat A1 with S on WhatsApp. | S gets the Terima / Tolak buttons (or the template, if S has not written in 24 h). **Terima** → Not Started. |
-| A7 | Repeat A1, then tap **Tolak**. | The bot asks why; type a reason. You see the same result as A4, and the Manager is told. |
+| S1 | From M, email a request with `PROMPT: assign this to <S>` and a PDF. | The reply says "Assigned to <S>; started". The row is Not Started. Within 2 minutes (working hours) S gets the assignment email with the PDF. |
+| S2 | From M: `PROMPT: assign this to <S> or <F>`. | Row Proposed, flagged; nobody is emailed until M approves in the sheet. |
+| S3 | From F: `PROMPT: assign this to <I>`. | Not Started; I gets the email, F is cc. |
+| S4 | From F: `PROMPT: assign this to <S>`. | Proposed, flagged "PROMPT: waiting for the manager (<S> does not report to <F>)". |
+| S5 | From I: `PROMPT: assign this to <S>`. | Proposed, flagged "PROMPT ignored: only a Manager or full-time staff can assign work". |
+| S6 | From I: `assign G-… to <S>` on a task I does. | "only a Manager or full-time staff can assign work". Nothing changes. |
 
 ## Updates by any email and status (DESIGN section 24)
 
@@ -166,8 +165,8 @@ You need the Manager (M) and two staff members (S1, S2).
 
 | # | Do this | Expected |
 |---|---------|----------|
-| T1 | From M, email a request with `PROMPT: assign this to <S1> and <S2>` and a PDF. | The row has Doer S1 and Support S2. Only S1 is asked to accept (if `Acceptance` exists). |
-| T2 | S1 accepts. Wait up to 2 minutes. | The assignment email goes to S1, cc S2, with the PDF. It lists Doer, Support and who does what. |
+| T1 | From M, email a request with `PROMPT: assign this to <S1> and <S2>` and a PDF. | The row has Doer S1 and Support S2, Not Started. |
+| T2 | Wait up to 2 minutes. | The assignment email goes to S1, cc S2, with the PDF. It lists Doer, Support and who does what. |
 | T3 | From S2, reply in that thread `G-… 40`, then `YES`. | Progress is 40 %. |
 | T4 | From S2: `done G-…` with a file. | "only <S1> can do that". Nothing changes. |
 | T5 | From M: `assign G-… to <S2> and <S1>`, then `YES`. | Doer S2, Support S1. |

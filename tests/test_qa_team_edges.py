@@ -244,7 +244,7 @@ def test_the_manager_naming_themselves_and_someone_else_starts_at_once_with_supp
     services, gmail = make()
     task = email_prompt(services, gmail, "PROMPT: assign this to Staff K and Staff A")
     assert (task.owner, task.doer, task.supporters) == ("Staff K", "Staff K", ["Staff A"])
-    assert (task.status, task.acceptance) == ("Not Started", "Accepted")
+    assert task.status == "Not Started"
 
 
 def test_an_intern_and_their_supervisor_supervisor_is_owner_not_support():
@@ -519,42 +519,15 @@ def test_the_reviewer_is_never_support_on_a_reassign_for_acceptance():
 # --- 4b / 7. Acceptance with Support -------------------------------------------------------------
 
 
-def test_team_prompt_by_the_manager_asks_only_the_doer_and_support_cannot_answer():
+def test_team_prompt_by_the_manager_starts_and_emails_the_doer_cc_support():
     services, gmail = make()
-    task = email_prompt(services, gmail, "PROMPT: assign this to Staff P and Staff A")
-    assert (task.doer, task.supporters, task.acceptance) == ("Staff P", ["Staff A"], "Pending")
     changes(services, gmail)  # baseline
-    assert changes(services, gmail).asked == 1
-    asks = [e for e, _ in gmail.sent if "please accept" in e.subject]
-    assert [e.to for e in asks] == [["staff.p@example.com"]] and all(not e.cc for e in asks)
-    thread = next(row for row in services.store.backend.tabs["_outbox"][1:]
-                  if "accept_ask" in str(row))[3]  # fmt: skip
-    gmail.add("yes-a", thread_id=str(thread).lstrip("'"), sender_email="staff.a@example.com",
-              subject="Re: please accept", body_text="YES")  # fmt: skip
-    process_inbox(gmail, services)
-    assert current(services, task.id).acceptance == "Asked"
-    accept = run(services, gmail, "Staff A", Command("accept", task.id))
-    assert not accept.changed and "Only Staff P" in accept.reply
-    assert run(services, gmail, "Staff P", Command("accept", task.id)).changed
+    task = email_prompt(services, gmail, "PROMPT: assign this to Staff P and Staff A")
+    assert (task.doer, task.supporters, task.status) == ("Staff P", ["Staff A"], "Not Started")
     changes(services, gmail)
     [email] = assignment_emails(gmail, task.id)
     assert email.to == ["staff.p@example.com"] and email.cc == ["staff.a@example.com"]
     assert [a.filename for a in email.attachments] == ["Surat.pdf"]
-
-
-def test_reassigning_a_pending_task_to_a_team_asks_the_new_doer_only():
-    services, gmail = make()
-    task = email_prompt(services, gmail, "PROMPT: assign this to Staff P")
-    changes(services, gmail)
-    changes(services, gmail)  # Staff P asked
-    result = run(services, gmail, "Staff K", Command("assign", task.id, "Staff A and Staff D"))
-    saved = current(services, task.id)
-    assert result.changed
-    assert (saved.doer, saved.supporters, saved.acceptance, saved.status) == (
-        "Staff A", ["Staff D"], "Pending", "Proposed")  # fmt: skip
-    assert changes(services, gmail).asked == 1
-    asked = [e.to[0] for e, _ in gmail.sent if "please accept" in e.subject]
-    assert asked == ["staff.p@example.com", "staff.a@example.com"]
 
 
 # --- 5. Reminders --------------------------------------------------------------------------------
@@ -704,9 +677,10 @@ def test_a_new_email_with_a_bare_command_first_line_no_still_logs_it():
     assert services.store.task_by_source_id("upd-2") is not None
 
 
-def test_without_the_acceptance_column_a_team_prompt_waits_for_approval_with_support():
+def test_a_full_timer_team_prompt_for_peers_waits_for_approval_with_support():
     services, gmail = make(acceptance=False)
-    task = email_prompt(services, gmail, "PROMPT: assign this to Staff P and Staff A")
+    task = email_prompt(services, gmail, "PROMPT: assign this to Staff P and Staff A",
+                        sender="staff.d@example.com")  # fmt: skip
     assert (task.status, task.doer, task.supporters) == ("Proposed", "Staff P", ["Staff A"])
     assert "Waiting for manager approval" in gmail.replies[-1][1].text
 

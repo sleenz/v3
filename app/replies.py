@@ -266,9 +266,8 @@ def answer(task: Task | None, staff: list[StaffMember], today: date) -> str:
 
 
 def needs_confirmation(command: Command) -> bool:
-    """Typed changes wait for Ya / YES; accepting or declining an assignment is itself the
-    answer (section 23)."""
-    return command.name in CHANGES and command.name not in ("accept", "decline")
+    """Typed changes wait for Ya / YES."""
+    return command.name in CHANGES
 
 
 # --- Pending confirmations -------------------------------------------------------------------

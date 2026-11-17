@@ -59,7 +59,13 @@ from app.pipeline import (
     decide_prompt,
     process_request,
 )
-from app.route import NEEDS_REVIEW_FLAG, sender_assignment
+from app.route import (
+    NEEDS_REVIEW_FLAG,
+    assignment_hold,
+    find_person,
+    prompt_unsure,
+    sender_assignment,
+)
 from app.sheets import SheetStore
 
 logger = logging.getLogger("grc.whatsapp")
@@ -88,7 +94,7 @@ HELP_TEXT = (
     "*udah 70%*, *G-0012 selesai* (with the file), *minta mundur ke 20 Nov*, *lagi stuck "
     "nunggu data*, *besok aja ingetin*, *undo*. I show the change first: tap *Ya* to save, "
     "*Ubah* or *Batal*.\n"
-    "Logged requests wait for the manager's approval before anyone is assigned."
+    "A PROMPT from the Manager assigns at once; other requests wait for the manager's approval."
 )
 NOT_REGISTERED_TEXT = (
     "This number isn't registered with the GRC tracker. Ask the GRC manager to add it to the "
@@ -684,10 +690,7 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
         prompt = parse_prompt(text)
         if prompt is not None:
             return _handle_prompt(message, prompt, ctx, now)
-        # section 23 before the deadline YES: "ya" replying to "Terima?" accepts (QA-A5)
-        answered = _acceptance_answer(message, person, ctx) if message.context_id else None
-        if answered is None:
-            answered = _deadline_answer(message, text, ctx, now)
+        answered = _deadline_answer(message, text, ctx, now)
         if answered is not None:
             return answered
     if message.kind == "other":
@@ -703,22 +706,6 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
 # --- Typed replies (DESIGN section 22, part C) ---------------------------------------------------
 
 CONFIRM_BUTTONS = [("cf:yes", "Ya"), ("cf:edit", "Ubah"), ("cf:no", "Batal")]
-
-
-def _acceptance_answer(message: WAMessage, person: StaffMember, ctx: WaContext) -> str | None:
-    """Section 23: "ya" / "tidak bisa, cuti" typed in reply to the Doer's "Terima?" message."""
-    from app import acceptance
-
-    if message.media:
-        return None
-    linked = _context_task(ctx, message, implicit=False)
-    task = next((t for t in ctx.store.tasks() if t.id == linked), None) if linked else None
-    if task is None or not acceptance.pending(task):
-        return None
-    answer = acceptance.answer_in(message.text.strip())
-    if answer is None or task.doer.strip().casefold() != person.name.casefold():
-        return None
-    return _run_now(message, person, ctx, Command(answer[0], task.id, answer[1]))
 
 
 def _handle_reply(
@@ -966,12 +953,15 @@ def _handle_prompt(message: WAMessage, prompt: str, ctx: WaContext, now: datetim
             f"PROMPT noted. Forward the request now; I'll log both in {WAIT_SECONDS} seconds.",
         )
     elif outcome == "late_prompt":
-        _reply(ctx, message.sender, _apply_late_prompt(value, prompt, ctx, now))
+        _reply(ctx, message.sender, _apply_late_prompt(value, prompt, ctx, now, message.sender))
     return outcome
 
 
-def _apply_late_prompt(task_id: str, prompt: str, ctx: WaContext, now: datetime) -> str:
-    """A PROMPT that arrived just after its request was logged: apply it to that task."""
+def _apply_late_prompt(
+    task_id: str, prompt: str, ctx: WaContext, now: datetime, sender: str = ""
+) -> str:
+    """A PROMPT that arrived just after its request was logged: apply it to that task. As for
+    any PROMPT (section 26), only a Manager or full-time staff assigns, and then it starts."""
     store = ctx.store
     store.load()
     task = next((t for t in store.tasks() if t.id == task_id), None)
@@ -981,6 +971,12 @@ def _apply_late_prompt(task_id: str, prompt: str, ctx: WaContext, now: datetime)
         return f"{task_id} is already approved; ask the GRC manager to change it."
     notes = "\n".join(part for part in (task.notes, f"Sender's PROMPT: {prompt}") if part)
     changes: dict[str, Any] = {"Notes": notes, "Last updated": now}
+    person = _person(store, sender) if sender else None
+    if person is None or not person.can_assign:
+        store.update_task(task_id, changes)
+        _audit(store, task_id, "PROMPT added", "Notes", "", "Sender's PROMPT added")
+        return (f"Added your PROMPT to {task_id} as a note: only a Manager or full-time staff "
+                "can assign work. Still waiting for manager approval.")  # fmt: skip
     replies: list[str] = []
     audits: list[tuple[str, str, str]] = []
     flags = list(task.flags)
@@ -1010,8 +1006,13 @@ def _apply_late_prompt(task_id: str, prompt: str, ctx: WaContext, now: datetime)
                 "Routing note": routed.note,
             }
         )
-        replies.append(f"proposed owner is now {routed.owner}")
+        replies.append(f"owner is now {routed.owner}")
         audits.append(("Owner", task.owner, str(routed.owner)))
+        doer = routed.doer or routed.owner or ""
+        hold = assignment_hold(person, find_person(doer, store.staff()))
+        if hold is None and not prompt_unsure(flags):
+            changes["Status"] = "Not Started"  # the change job emails the files (section 26)
+            audits.append(("Status", task.status, "Not Started"))
     if decision.reviewer:
         changes.update({"Reviewer": decision.reviewer, "Needs review": "Yes"})
         replies.append(f"reviewer is {decision.reviewer}")
@@ -1030,7 +1031,12 @@ def _apply_late_prompt(task_id: str, prompt: str, ctx: WaContext, now: datetime)
     problems = [part for part in replies if part.startswith("I couldn't")]
     reply = f"Updated {task_id}: " + ", ".join(done) + "." if done else ""
     reply = reply or f"Added your PROMPT to {task_id} as a note."
-    return " ".join([reply, *problems, "Still waiting for manager approval."])
+    if changes.get("Status") == "Not Started":
+        doer = changes.get("Doer") or task.doer
+        tail = f"Started: {doer} gets the assignment email with the files within a few minutes."
+    else:
+        tail = "Still waiting for manager approval."
+    return " ".join([reply, *problems, tail])
 
 
 def _close_question(rows: list[WaPending], task_id: str, now: datetime) -> None:

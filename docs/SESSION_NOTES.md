@@ -102,7 +102,7 @@ WhatsApp is not live yet: `WA_ACCESS_TOKEN` and `WA_APP_SECRET` have no value sa
 ## 4b. v1.5: more responsive bot (approved 16 Nov 2026)
 
 The user asked for four things, built in four phases, one PR each:
-1. **Phase 1 (built, DESIGN section 23):** accepting an assignment. It applies only to a
+1. **Phase 1 (built, then withdrawn 17 Nov for section 26):** accepting an assignment. It applies only to a
    Manager's PROMPT. The Doer is asked Yes/No. Yes → Not Started and the files follow. No →
    back to the Manager.
 2. **Phase 2 (built, DESIGN section 24):** updates by any email to the bot (not only replies), `status G-0012`, and
@@ -112,6 +112,13 @@ The user asked for four things, built in four phases, one PR each:
    update progress, but only the Doer reviews or marks Done.
 4. **Phase 4:** three QA subagents write fake-based scenario tests (assignment journeys,
    updates by email and WhatsApp, multi-person and edge cases), report, then fix.
+
+## 4c. 17 Nov 2026: section 26 replaces the acceptance step
+
+The owner asked: no Yes/No; a PROMPT assignment emails the files straight away; only the
+Manager and full-time staff assign. Built as DESIGN section 26 (full-time staff: themselves or
+their reports; unsure PROMPTs wait for the Manager). The acceptance code, template and tests
+were removed; it never ran live.
 
 ## 5. Things learned the hard way (troubleshooting)
 
