@@ -38,6 +38,10 @@ from tests.fakes import (
     FakeWhatsApp,
 )
 
+# Timing, thread and process fields every log record has: never message data, and numbers in
+# them (e.g. relativeCreated 12365.1555) must not look like a phone number.
+_STD = set(logging.LogRecord("x", 0, "", 0, "", (), None).__dict__) - {"msg", "args"}
+
 MONDAY = date(2026, 10, 26)
 NOW = datetime(2026, 10, 26, 16, 0, tzinfo=clock.TZ)
 P_WA = "85255500016"  # Staff P (fixture)
@@ -860,6 +864,10 @@ def test_logs_carry_no_text_names_or_addresses(caplog):
         process_inbox(gmail, services)
     assert caplog.records  # the flow did log something
     for record in caplog.records:
-        blob = record.getMessage() + " " + " ".join(str(v) for v in record.__dict__.values())
+        blob = (
+            record.getMessage()
+            + " "
+            + " ".join(str(v) for k, v in record.__dict__.items() if k not in _STD)
+        )
         for secret in ("rahasia", "Staff P", "Staff K", "staff.p@example.com", P_WA, "OJK"):
             assert secret not in blob, (record.msg, secret)

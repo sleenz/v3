@@ -581,7 +581,7 @@ class SheetStore:
             )
             if row_number is None:
                 row: list[Any] = [""] * len(tab.header)
-                row[setting_col], row[value_col] = setting.strip(), to_cell(value)
+                row[setting_col], row[value_col] = to_cell(setting.strip()), to_cell(value)
                 self._backend.append(quote_tab("Config") + "!A1", [row])
             else:
                 cell = f"{quote_tab('Config')}!{column_letter(value_col)}{row_number}"

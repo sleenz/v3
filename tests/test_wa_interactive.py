@@ -412,8 +412,13 @@ def test_blocked_and_extension_decision_by_email():
         gmail.messages[mid] = pending[mid]
         process_inbox(gmail, services)
         assert "Reply YES to confirm" in gmail.replies[-1][1].text
-        gmail.add(f"{mid}-yes", sender_email=f"{sender}@example.com", subject="Re: x",
-                  body_text="YES")  # fmt: skip
+        gmail.add(
+            f"{mid}-yes",
+            thread_id=f"thread-{mid}",
+            sender_email=f"{sender}@example.com",
+            subject="Re: x",
+            body_text="YES",
+        )  # the YES comes in the question's thread
         assert process_inbox(gmail, services).commands == 1
     saved = task(ctx, task_id)
     assert saved.status == "On Hold" and saved.due_date == date(2026, 11, 20)

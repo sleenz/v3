@@ -55,6 +55,7 @@ class Pending:
     message_id: str = ""  # the message that asked for it (dedupe and ProgressLog)
     media: list[dict[str, str]] = field(default_factory=list)  # WhatsApp files to fetch on Ya
     email_id: str = ""  # the email whose attachments go with it
+    thread_id: str = ""  # email: the YES must come in this thread (QA6-C1)
     intake: bool = False  # a new email read as an update: NO logs it as a request (s. 24)
 
     def command(self) -> Command:

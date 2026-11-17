@@ -30,6 +30,10 @@ from tests.fakes import (
     FakeWhatsApp,
 )
 
+# Timing, thread and process fields every log record has: never message data, and numbers in
+# them (e.g. relativeCreated 12365.1555) must not look like a phone number.
+_STD = set(logging.LogRecord("x", 0, "", 0, "", (), None).__dict__) - {"msg", "args"}
+
 MONDAY = date(2026, 10, 26)
 A_MAIL = "staff.a@example.com"
 K_MAIL = "staff.k@example.com"  # Staff K, the Manager
@@ -845,6 +849,6 @@ def test_updates_log_no_text_names_emails_or_numbers(caplog):
                A_WA, "5550 0001", "ATMR report"]  # fmt: skip
     leaks = []
     for record in caplog.records:
-        blob = " ".join(str(value) for value in record.__dict__.values())
+        blob = " ".join(str(value) for key, value in record.__dict__.items() if key not in _STD)
         leaks += [(record.getMessage(), s) for s in secrets if s in blob]
     assert not leaks

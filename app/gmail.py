@@ -575,7 +575,8 @@ def _propose_by_email(
     files = _real_files(message)
     task = next((t for t in store.tasks() if t.id == command.task_id), None)
     pending = replies.Pending(command.name, command.task_id, command.value, message.id,
-                              email_id=message.id if files else "", intake=intake)  # fmt: skip
+                              email_id=message.id if files else "", intake=intake,
+                              thread_id=message.thread_id)  # fmt: skip
     summary = replies.describe(command, task, [f.filename for f in files])
     if replies.propose(store, person.name, "Email", pending, clock.now()):
         cancel = (
@@ -648,6 +649,8 @@ def _email_confirmation(
     if convo is None:
         return _late_answer(gmail, services, message, person, first)
     pending = replies.Pending.load(convo.value)
+    if pending.thread_id and message.thread_id != pending.thread_id:
+        return False  # an answer counts only in the thread that asked (a forged sender: QA6-C1)
     if not (replies.is_no(first) or replies.is_yes(first)):
         replies.drop_confirm(store, person.name)  # anything else drops the question
         return False
@@ -846,6 +849,10 @@ def _manager_edit(
     if person is None or person.role != "Manager" or not _may_be_update(message):
         return False
     text = strip_noise(message.body_text) or message.body_text
+    from app.commands import parse_command
+
+    if parse_command(text, has_context=True) is not None:
+        return False  # a command, not an edit; never sent to the edit reader (QA6-C9)
     today = clock.today()
     changes = sheet_edit.by_rules(text)
     config = store.config()
@@ -859,6 +866,8 @@ def _manager_edit(
         return False
     good, problems = sheet_edit.check(changes, store, today)
     new_email = not logged and not outbox.by_thread(store, message.thread_id)
+    if not good and by_ai and new_email:
+        return False  # read by the AI, nothing valid: handled as a request (D15, QA6-C10)
     if not good:
         why = "I could not change that: " + "; ".join(problems) + "."
         _thread_reply(gmail, store, message, why, person.name, "", "reply")

@@ -30,6 +30,10 @@ from tests.fakes import (
     FakeWhatsApp,
 )
 
+# Timing, thread and process fields every log record has: never message data, and numbers in
+# them (e.g. relativeCreated 12365.1555) must not look like a phone number.
+_STD = set(logging.LogRecord("x", 0, "", 0, "", (), None).__dict__) - {"msg", "args"}
+
 K = "staff.k@example.com"
 K_WA = "85255500011"
 P_WA = "85255500016"
@@ -177,11 +181,6 @@ def test_manager_demoted_between_preview_and_yes_changes_nothing():
     assert fresh(services, task.id).priority == "Medium"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-C1: a YES from the Manager's address in any thread (a forged From) confirms "
-    "a pending edit; nothing ties the YES to the confirmation thread or checks sender auth",
-)
 def test_forged_manager_edit_and_yes_in_other_threads_do_not_apply():
     services, gmail, _task = setup()
     # The attacker forges From: staff.k@example.com twice, never seeing the question.
@@ -257,7 +256,6 @@ def test_dates_the_rules_cannot_read_are_refused_not_guessed(typed):
     assert good == [] and "is not a date" in problems[0]
 
 
-  # fmt: skip
 def test_year_first_slash_date_is_not_misread():
     services, _, task = setup()
     good, problems = check(
@@ -267,11 +265,6 @@ def test_year_first_slash_date_is_not_misread():
     assert (good and good[0].value == "2026-12-05") or (not good and problems)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-C3: Progress '50%' is refused ('progress is 0-100'); the rules read '70%' "
-    "everywhere else (section 19/22), section 29 says Progress is read by rules",
-)
 def test_progress_with_a_percent_sign_is_read():
     services, _, task = setup()
     good, problems = check([Change(tab="Master", key=task.id, column="Progress", value="50%")],
@@ -279,11 +272,6 @@ def test_progress_with_a_percent_sign_is_read():
     assert problems == [] and good[0].value == "0.5"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-C4: changes beyond the 20th are dropped silently; section 29 says what fails "
-    "is listed with the reason",
-)
 def test_more_than_twenty_changes_says_what_was_left_out():
     services, _, task = setup()
     asked = [Change(tab="Master", key=task.id, column="Notes", value=f"n{i}") for i in range(25)]
@@ -316,11 +304,6 @@ def test_fixed_form_staff_name_split_and_new_config_setting():
         ("Staff", "Staff A", "Reports to"), ("Config", "Some new setting", "Value")]  # fmt: skip
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-C5: Master 'Submitted at' (a date-time) takes any text; 'banana' is written "
-    "and every later Master read raises SchemaError (section 29: dates read by rules; D15)",
-)
 def test_submitted_at_must_be_a_date_time():
     services, _, task = setup(master_extra=("Submitted at",))
     good, _problems = check(
@@ -336,11 +319,6 @@ def test_submitted_at_must_be_a_date_time():
 # --- 3. Values that could hurt -------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-C6: Config values are not checked; a value AppConfig rejects is previewed "
-    "and written, and the next store.config() raises SchemaError (whole service stops)",
-)
 @pytest.mark.parametrize(
     "setting,value",
     [("Workday start", "banana"), ("Max reminders per day", "many"), ("AI provider", "Gemini"),
@@ -356,43 +334,16 @@ def test_a_config_value_that_breaks_appconfig_is_refused(setting, value):
     services.store.config()  # must still load
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-C6: after the Manager's YES to 'Workday start = banana' every inbox run raises "
-    "SchemaError: no new request is logged and the Manager cannot fix it by prompt (D15)",
-)
 def test_after_a_bad_config_edit_requests_are_still_logged_and_it_can_be_fixed_by_prompt():
     services, gmail, _ = setup()
     email(gmail, services, "e1", "edit config Workday start = banana")
-    assert "Config Workday start: 08:00 → banana" in asked_texts(gmail)[-1]
-    yes(gmail, services)
-    assert "Changed:" in asked_texts(gmail)[-1]  # the YES is answered
+    assert "is not a value the sheet can use" in asked_texts(gmail)[-1]  # refused, not previewed
+    assert services.store.config().workday_start.hour == 8
     email(gmail, services, "r1", "Mohon siapkan laporan OJK", sender="staff.p@example.com",
           subject="Laporan")  # fmt: skip
     assert services.store.task_by_source_id("r1") is not None
 
 
-def test_bad_config_yes_today_gets_no_answer_and_breaks_the_next_run():
-    """What happens now (documents QA6-C6): the value is written, the YES gets no reply (the
-    reply needs config().sender_name) and the next run stops on SchemaError."""
-    from app.sheets import SchemaError
-
-    services, gmail, _ = setup()
-    email(gmail, services, "e1", "edit config Workday start = banana")
-    replies_before = len(gmail.replies)
-    yes(gmail, services)
-    assert len(gmail.replies) == replies_before
-    with pytest.raises(SchemaError):
-        email(gmail, services, "r1", "Mohon siapkan laporan OJK", sender="staff.p@example.com",
-              subject="Laporan")  # fmt: skip
-    assert {"INBOX", "UNREAD"} <= gmail.labels("r1")  # left for a later run, not lost
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-C7: Staff values are not checked; Role 'Boss' or Capacity 'abc' is written and "
-    "every later Staff read raises SchemaError (no one is recognised, service stops)",
-)
 @pytest.mark.parametrize("column,value", [("Role", "Boss"), ("Capacity (1 = full time)", "abc")])
 def test_a_staff_value_that_breaks_the_staff_tab_is_refused(column, value):
     services, _, _ = setup()
@@ -434,11 +385,6 @@ def test_formula_like_values_are_written_as_text(value):
     assert note == reports == sender == "'" + value
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-C8: a new Config setting name is written raw (USER_ENTERED, no ' prefix), so a "
-    "setting named '=HYPERLINK(...)' becomes a live formula in the Config tab",
-)
 def test_a_new_config_setting_name_is_never_a_formula():
     services, _, _ = setup()
     name = '=HYPERLINK("http://x.example","x")'
@@ -579,12 +525,6 @@ def test_a_second_yes_email_after_applying_changes_nothing_more():
 # --- 5. Interaction with other Manager messages --------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-C9: the edit reader runs before command parsing, so every Manager command "
-    "(e.g. 'status G-0001') costs a Gemini edit call and can be swallowed as an edit "
-    "(section 29: only messages that are not a command)",
-)
 def test_a_manager_command_by_email_is_not_sent_to_the_edit_reader():
     ai = ai_edit([], confidence=0.9, is_edit=False)
     services, gmail, task = setup(ai)
@@ -593,10 +533,6 @@ def test_a_manager_command_by_email_is_not_sent_to_the_edit_reader():
     assert ai.edit_calls == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-C9: on WhatsApp too, a Manager command reaches the AI edit reader first",
-)
 def test_a_manager_command_on_whatsapp_is_not_sent_to_the_edit_reader():
     ai = ai_edit([], confidence=0.9, is_edit=False)
     services, gmail, task = setup(ai)
@@ -661,11 +597,6 @@ def test_manager_reply_in_a_task_notice_thread_is_an_edit_but_not_intake():
     assert fresh(services, task.id).due_date == date(2026, 12, 5)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-C10: a new Manager email the AI reads as an edit whose changes all fail gets "
-    "'I could not change that' and is marked read: never logged, no NO offered (D15)",
-)
 def test_a_new_email_misread_as_an_invalid_edit_is_still_logged():
     ai = ai_edit([{"tab": "Master", "key": "G-0999", "column": "Due date", "value": "2026-12-05"}])
     services, gmail, _ = setup(ai)
@@ -699,11 +630,6 @@ def test_auditlog_per_cell_progresslog_for_master_and_last_updated():
     assert fresh(services, task.id).last_updated == clock.now()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-C11: ProgressLog Channel is hard-coded 'Email' in sheet_edit.apply, so a "
-    "WhatsApp edit is logged as Email (section 22: ProgressLog records the channel)",
-)
 def test_progresslog_channel_of_a_whatsapp_edit():
     services, gmail, task = setup()
     ctx = wa_ctx(services, gmail)
@@ -753,7 +679,7 @@ def test_logs_hold_no_message_text_names_emails_or_numbers(caplog):
     wa(ctx, "w1", text=f"edit {task.id} Notes = secret-phrase-88")
     wa(ctx, "w2", tap="cf:yes")
     text = "\n".join(
-        f"{r.getMessage()} {sorted((k, str(v)) for k, v in r.__dict__.items())}"
+        f"{r.getMessage()} {sorted((k, str(v)) for k, v in r.__dict__.items() if k not in _STD)}"
         for r in caplog.records
     )
     for leak in ("secret-phrase", "Staff P", "Staff K", "@example.com", "5550", K_WA):

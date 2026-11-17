@@ -39,6 +39,10 @@ from tests.fakes import (
     FakeWhatsApp,
 )
 
+# Timing, thread and process fields every log record has: never message data, and numbers in
+# them (e.g. relativeCreated 12365.1555) must not look like a phone number.
+_STD = set(logging.LogRecord("x", 0, "", 0, "", (), None).__dict__) - {"msg", "args"}
+
 SHEET = "https://docs.google.com/spreadsheets/d/sheet-qa6a"
 P_WA = "85255500016"  # Staff P (fixture, fake)
 A_WA = "85255500001"  # Staff A (fixture, fake)
@@ -784,6 +788,10 @@ def test_the_whole_flow_logs_no_names_emails_or_text(caplog):
     assert now(services, task.id).status == "In Progress"
     banned = ["Staff ", "@example.com", "5550", "cuti", "stress test", "Surat", "take it"]
     for record in caplog.records:
-        blob = record.getMessage() + " " + " ".join(str(v) for v in record.__dict__.values())
+        blob = (
+            record.getMessage()
+            + " "
+            + " ".join(str(v) for k, v in record.__dict__.items() if k not in _STD)
+        )
         for word in banned:
             assert word not in blob, (record.msg, word)

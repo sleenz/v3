@@ -24,9 +24,9 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.commands import progress_fraction, task_id_in
 from app.extract.ai import AIProvider, NotConfigured, NullProvider, _executor
-from app.models import AuditEntry, StaffMember
+from app.models import AppConfig, AuditEntry, StaffMember, Task
 from app.route import match_staff_name
-from app.sheets import DATE_COLUMNS, SheetStore
+from app.sheets import DATE_COLUMNS, DATETIME_COLUMNS, SheetStore
 
 logger = logging.getLogger("grc.sheet_edit")
 
@@ -194,8 +194,13 @@ def _value(column: str, raw: str, today: date) -> tuple[Any, str]:
         except ValueError:
             day = day_in(text, today)
             return (day, "") if day else (None, f'"{raw}" is not a date')
+    if column in DATETIME_COLUMNS:  # e.g. Submitted at (QA6-C5)
+        try:
+            return datetime.fromisoformat(text), ""
+        except ValueError:
+            return None, f'"{raw}" is not a date and time (YYYY-MM-DD HH:MM)'
     if column == "Progress":
-        fraction = progress_fraction(text)
+        fraction = progress_fraction(text.rstrip("%").strip())  # "50%" (QA6-C3)
         return (fraction, "") if fraction is not None else (None, "progress is 0-100")
     if column == "Status":
         status = next((s for s in STATUSES if s.casefold() == text.casefold()), None)
@@ -237,6 +242,31 @@ def _staff_and_column(
     return person, column
 
 
+def _still_loads(
+    tab: str,
+    key: str,
+    column: str,
+    value: Any,
+    row: dict[str, Any],
+    rows_after: dict[tuple[str, str], dict[str, Any]],
+    config_after: dict[str, Any],
+) -> str:
+    """A problem when the row (Master task, Staff person) or the whole Config would no longer
+    load with the new value: such a value would stop every later job (D15, QA6-C6/C7)."""
+    try:
+        if tab == "Config":
+            trial = {**config_after, key: value}
+            AppConfig.model_validate(trial)
+            config_after.update(trial)
+            return ""
+        merged = {**rows_after.get((tab, key), row), column: value}
+        (Task if tab == "Master" else StaffMember).model_validate(merged)
+        rows_after[(tab, key)] = merged
+        return ""
+    except ValidationError:
+        return f'"{value}" is not a value the sheet can use there'
+
+
 def check(changes: list[Change], store: SheetStore, today: date) -> tuple[list[Change], list[str]]:
     """The changes that can be written (key and column as in the sheet, value read, the old
     value kept for the preview) and a reason for each one that cannot."""
@@ -245,6 +275,11 @@ def check(changes: list[Change], store: SheetStore, today: date) -> tuple[list[C
     tasks = {t.id: t for t in store.tasks() if t.id}
     staff = store.staff()
     settings = {name.casefold(): name for name in store.setting_names()}
+    config_after = dict(store.setting_values())  # every Config change must still load (QA6-C6)
+    rows_after: dict[tuple[str, str], dict[str, Any]] = {}
+    if len(changes) > MAX_CHANGES:  # QA6-C4
+        problems.append(f"{len(changes) - MAX_CHANGES} more changes left out (at most "
+                        f"{MAX_CHANGES} per message)")  # fmt: skip
     for change in changes[:MAX_CHANGES]:
         if change.tab == "Master":
             task_id = task_id_in(change.key)
@@ -275,6 +310,8 @@ def check(changes: list[Change], store: SheetStore, today: date) -> tuple[list[C
         value, problem = _value(column, change.value, today)
         if not problem and change.tab == "Master" and column in PEOPLE_COLUMNS and value:
             value, problem = _people(str(value), staff, many=column == "Support")
+        if not problem:
+            problem = _still_loads(change.tab, key, column, value, row, rows_after, config_after)
         if problem:
             problems.append(f"{key} {column}: {problem}")
             continue
@@ -311,6 +348,7 @@ def apply(
     now: datetime,
     message_id: str = "",
     audit_user: str = "",
+    channel: str = "Email",
 ) -> list[str]:
     """Write the checked changes; return what was written (one line each). Master goes through
     `update_task` (with Last updated), Staff through `update_staff`, Config through
@@ -348,7 +386,7 @@ def apply(
     for task_id, cells in by_task.items():
         store.update_task(task_id, {**cells, "Last updated": now})
         if task_id in tasks:
-            progress.log_changes(store, tasks[task_id], cells, actor, "Email", message_id,
+            progress.log_changes(store, tasks[task_id], cells, actor, channel, message_id,
                                  "Prompt edit", now)  # fmt: skip
     try:
         store.append_audit(audits)

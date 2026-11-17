@@ -709,7 +709,8 @@ def _sheet_edit(command: Command, ctx: CommandContext, now: datetime) -> Command
     if not good:
         return CommandResult("Nothing changed: " + "; ".join(problems))
     written = sheet_edit.apply(good, ctx.store, ctx.actor.name, now, ctx.message_id,
-                               audit_user=ctx.actor.email or ctx.actor.name)  # fmt: skip
+                               audit_user=ctx.actor.email or ctx.actor.name,
+                               channel=ctx.channel)  # fmt: skip
     reply = "Changed:\n" + "\n".join(written)
     if problems:
         reply += "\nNot changed: " + "; ".join(problems)

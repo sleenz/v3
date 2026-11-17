@@ -731,6 +731,8 @@ def _manager_edit(
     text = message.text.strip()
     if not text or _open_draft(store.wa_pending(), message.sender, now) is not None:
         return None  # inside a request's 30-second window: it joins the draft
+    if parse_command(text, has_context=bool(message.context_id)) is not None:
+        return None  # a command, not an edit (QA6-C9)
     changes = sheet_edit.by_rules(text)
     config = store.config()
     if changes is None and config.ai_provider != "Off":
