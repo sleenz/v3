@@ -1068,10 +1068,13 @@ decides who may assign and when a PROMPT waits for the Manager.
 - **Submission report** (`submitted G-0012 hardcopy to OJK today 15:30`, "sudah dikirim …",
   "terkirim …", a Gemini `submitted` reading of plain words, or **Sudah dikirim** on the
   WhatsApp card, which asks how and when):
-  - The method is read by rules from the words (Hardcopy, Email, WhatsApp, Portal, Fax); the
-    date and time from "today", "kemarin", "24/10", "23 Okt", "15:30", "jam 3" (1-6 o'clock
-    without "pagi" is the afternoon). No time means now. A future time or no method: the bot
-    asks "How and when was it submitted?" and changes nothing.
+  - The method is read by rules from the words (Hardcopy, Email, WhatsApp, Portal, Fax; the
+    first one named wins); the date and time from "today", "kemarin", "24/10", "2026-10-24",
+    "23 Okt", "15:30", "jam 3" (1-6 o'clock without "pagi" is the afternoon). A date without a
+    year more than 60 days ahead is last year's. No time means now. No method, an impossible
+    date, a future time or a later word ("besok", "nanti"): the bot asks "How and when was it
+    submitted?" and changes nothing (no YES question). The moment read is kept with the
+    question, so YES writes what was shown.
   - It writes Status `Done`, `Submitted date`, and the optional Master columns `Submission
     method` and `Submitted at`, and adds "Submitted <when> by <name>: <as typed>" to Notes. A
     file or link with it is kept as proof (optional). It waits for YES like any typed change.
@@ -1099,10 +1102,16 @@ Master, Staff and Config, always shown first and applied on YES.
   written: Master `ID`, `Weight`, `Source ID`, `Original message`, `Files`, `Last updated`;
   Staff `Name`, `Staff ID`, `Weighted open load`. Dates, Progress and Status are read by rules;
   Owner / Doer / Reviewer / Support must match Staff names (section 21 rules). "-" clears a
-  cell. At most 20 changes per message. What fails is listed with the reason.
+  cell. At most 20 changes per message (the rest are listed as left out). What fails is
+  listed with the reason. Every new value is also checked against the model the sheet is
+  loaded with (the task row, the Staff row, the whole Config): a value the service could not
+  read back ("Workday start = banana", "Role = Boss") is refused, as it would stop every job.
+  A command (`approve G-…`, `status G-…`) is never sent to the edit reader.
 - **Confirmation.** "Reply YES to confirm" with one line per cell, `G-0012 · Due date:
   2026-11-20 → 2026-12-05` (WhatsApp: [Ya] [Ubah] [Batal]). The question goes to the Manager's
-  own inbox or phone, so a forged sender cannot confirm. The changes are checked again on YES.
+  own inbox or phone, and an email YES counts only in the thread that asked, so a forged
+  sender's YES elsewhere confirms nothing. The changes are checked again on YES. An edit Gemini
+  read from a new email whose changes all fail is handled as a request.
   An edit Gemini read from a new email adds "Reply NO if this is a new request instead" (NO
   logs it, D15); the fixed form's NO only cancels.
 - **Record.** Every cell goes to AuditLog (`Prompt edit (Master|Staff|Config)`, old and new
