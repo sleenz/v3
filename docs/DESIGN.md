@@ -913,47 +913,11 @@ questions are answered from the sheet at once. Logged per call: provider, model,
 version, latency, confidence, fallback; never the text.
 
 
-## 23. Accepting an assignment (v1.5 phase 1; approved by the project owner, 16 Nov 2026)
+## 23. Accepting an assignment (16 Nov 2026; withdrawn 17 Nov 2026, replaced by section 26)
 
-A Manager's PROMPT counts as the manager's approval. The person named still has to say yes.
-
-- **When it applies.** The request comes from a Staff member whose Role is `Manager`. Its
-  PROMPT line names an owner that matches Staff, and the Master has an `Acceptance` column.
-  In every other case nothing changes: Status `Proposed`, waiting for the manager.
-  - If the Manager names themselves, the task starts at once: `Not Started`, Acceptance
-    `Accepted`.
-  - Otherwise: Status `Proposed`, Acceptance `Pending`, and the acknowledgement says "waiting
-    for <Doer> to accept".
-- **Asking.** The change job asks the Doer once, in working hours. It records the ask in
-  `_outbox` as kind `accept_ask` (to find the thread) and sets Acceptance to `Asked`.
-  - Acceptance values: `Pending` (to ask), `Asked`, `Accepted`, `Declined`. Pending and Asked
-    both mean "waiting for the Doer".
-  - A reassign sets `Pending` again, so the new person, or the same person again, is asked.
-  - WhatsApp, inside the 24-hour window: buttons **Terima** (`acc:<id>`) and **Tolak**
-    (`dec:<id>`).
-  - WhatsApp, outside the window: the template `grc_tugas_baru` with the same payloads.
-  - Email, or the fallback: "[GRC] <id> – please accept: …", which says "Reply YES / Reply NO
-    and the reason". No files are attached yet; the email links to them.
-- **Yes.** Acceptance `Accepted`, Status `Not Started`. The next change run sends the usual
-  assignment email with the files.
-  - Yes is a Terima tap, a YES in the ask thread, a typed "ya" in reply to the WhatsApp ask,
-    or `accept G-0012` / `terima G-0012`.
-  - An accept is the answer to a question, so it needs no confirmation.
-  - `accept` must be alone or followed only by an ID, so "terima kasih" is not an accept.
-- **No.** Acceptance `Declined`, Status stays `Proposed`, Flag `Declined by <name>: <reason>`.
-  Every Manager is told the reason by email (or WhatsApp) with "assign <id> to <name>".
-  - No is a Tolak tap followed by the reason question, a NO plus the reason by email, or
-    `decline G-0012 <reason>`.
-- **Reassigning.** The Manager runs `assign <id> to <name>`. This applies on a Proposed task
-  whose Acceptance is Pending or Declined.
-  - It sets the Owner and Doer by the usual rules, clears the "Declined by" flags and sets
-    Acceptance back to `Pending`. The new person is asked.
-- **Who can answer.** Only the Doer. Anyone else gets "not allowed".
-- **Reminders.**
-  - The morning message lists every unanswered ask first, as "Assigned to you, waiting for
-    your answer".
-  - The manager summary has a section "Waiting for acceptance". The WhatsApp summary template
-    keeps its five numbers.
+The Yes/No acceptance step was removed before go-live at the owner's request: the Manager always
+assigns by PROMPT, so a second confirmation is not wanted. There is no `Acceptance` column and no
+`grc_tugas_baru` template. A PROMPT assignment now starts the task at once (section 26).
 
 ## 24. Updates by any email, status, before → after (v1.5 phase 2; approved 16 Nov 2026)
 
@@ -1039,3 +1003,32 @@ Master column `Support`, `; `-separated (a `,` is read too). The Sheet's existin
   - The supported task shows in their `tugas` list marked `support`. Its WhatsApp card has
     only **Update progres** and **Lainnya**.
   - `status` lists the supporters.
+
+## 26. A PROMPT assignment starts the task; who may assign (approved 17 Nov 2026)
+
+Replaces section 23 and changes section 21's "the task still waits for the manager's approval"
+for PROMPTs from people who may assign.
+
+- **Who may assign.** Only the Manager and full-time staff (Role `Full time`; the old `Staff`
+  reads as full time).
+  - The Manager may assign anyone.
+  - Full-time staff may assign themselves or someone who reports to them (`Reports to`), as in
+    v1.4 A2.
+  - Interns and additional help cannot assign. Their PROMPT is ignored: the request is logged
+    and routed by the rules, flagged `PROMPT ignored: only a Manager or full-time staff can
+    assign work`. Their `assign G-… to …` is refused with the same reason.
+- **A PROMPT that may assign starts the task.** Status `Not Started` straight away; the change
+  job emails the Doer the assignment with the original files (cc the Owner and Support) on its
+  next run, within 2 minutes in working hours (section 22 hours still apply). The sender's reply
+  says "Assigned to X; started".
+- **It waits for the Manager instead** (Status `Proposed`, flagged `PROMPT: waiting for the
+  manager (…)`) when:
+  - full-time staff name someone who does not report to them;
+  - the AI and the rules disagree on the owner (`PROMPT: owner unclear … - check`);
+  - the person's internship has ended or ends before the due date;
+  - no owner could be read (unknown name, names joined by "or").
+  "is a manager" and "is additional help" do not hold a PROMPT: they only stop the routing
+  rules from proposing those people (R3).
+- **No PROMPT** (rules-only routing): unchanged, the task waits for the Manager's approval.
+- A late WhatsApp PROMPT (section 21.6) follows the same rules; from someone who may not assign
+  it is added to Notes only.

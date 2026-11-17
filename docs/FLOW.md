@@ -90,9 +90,13 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    S([Proposed task in Master]) --> M["Manager checks Owner, Doer,<br/>Due date (person)"]
+    PR{"PROMPT from the Manager, or full-time<br/>staff for themselves or their reports?"}
+    PR -->|"yes, owner clear"| NS["Status Not Started<br/>at once (section 26)"]
+    PR -->|"no, or unsure"| S([Proposed task in Master])
+    S --> M["Manager checks Owner, Doer,<br/>Due date (person)"]
     M --> ST["Manager sets Status<br/>Proposed → Not Started (person)"]
-    ST --> CJ["Change job, every 2 minutes"]
+    NS --> CJ["Change job, every 2 minutes"]
+    ST --> CJ
     CJ --> WH{"Working hours?<br/>(Workday start–end, working day)"}
     WH -->|no| WAIT[Wait for the next Workday start]
     WAIT --> CJ
@@ -103,7 +107,9 @@ flowchart TD
     WC --> P4[["Phase 4"]]
 ```
 
-- Nobody is assigned until the Manager approves: logging only **proposes** (section 2).
+- A PROMPT from the Manager (or from full-time staff for themselves or their reports) starts the
+  task at once; anything else, or a PROMPT the bot is unsure about, only **proposes** and waits
+  for the Manager (sections 2 and 26). Interns and additional help cannot assign.
 - The assignment email attaches the files from the bot mailbox (up to 20 MB), so the Doer gets
   the forwarded PDFs (v1.4 F4).
 - Notices outside working hours wait in `_event_queue` until 10:00 on the next working day

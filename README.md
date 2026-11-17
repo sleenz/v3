@@ -263,14 +263,14 @@ Replaces the 09:00 digest and the old daily WhatsApp reminder.
       (`Yes` or the date the person agreed). `Reminders paused` = `Yes` still stops everything.
 - [ ] Scheduler: run `deploy/setup_scheduler.sh` (adds `grc-reminders`, deletes `grc-digest` and
       `grc-wa-reminders`).
-- [ ] WhatsApp only: submit the five templates in `whatsapp_templates/` (section 9b).
-- [ ] Accepting an assignment (DESIGN section 23):
-      - Add the column **`Acceptance`** to Master. Until it exists, a Manager's PROMPT still waits
-        for approval as before, and `/health` warns.
-      - On WhatsApp, also submit `grc_tugas_baru` (section 9b).
-      - Tell the team: when the Manager assigns you a task, you get "please accept". Reply
-        **YES** (or tap **Terima**) to take it; the files follow. Reply **NO** and the reason
-        (or tap **Tolak**), and the Manager reassigns it with `assign G-… to <name>`.
+- [ ] WhatsApp only: submit the four templates in `whatsapp_templates/` (section 9b).
+- [ ] Assignments (DESIGN section 26), no setup needed. Tell the team:
+      - A PROMPT from the Manager ("PROMPT: assign this to Cia") starts the task at once: Cia
+        gets the assignment email with the files within 2 minutes (working hours). No Yes/No.
+      - Full-time staff can assign themselves or their own interns the same way; naming anyone
+        else waits for the Manager. Interns and additional help cannot assign.
+      - A PROMPT the bot is unsure about (Gemini and the rules disagree, an unknown name, "or")
+        waits for the Manager, flagged.
 - [ ] Updates by any email (DESIGN section 24), no setup needed. Tell the team:
       - They can email the bot a new message about a task, e.g. "G-0012 is at 70%, waiting
         for finance". With Gemini on, the task ID can be left out: "the stress test report is
@@ -432,7 +432,7 @@ BRI does this part in Meta; the service only needs the IDs and two secrets after
 - [ ] WhatsApp → Configuration → Webhook: callback URL
       `https://v2-git-1085688466076.asia-southeast2.run.app/wa/webhook`, the verify token above,
       then subscribe to the **messages** field.
-- [ ] WhatsApp Manager → Message templates → create the five templates in
+- [ ] WhatsApp Manager → Message templates → create the four templates in
       `whatsapp_templates/` exactly as written there: category *Utility*, language
       *Indonesian* (`id`), the body text with its example values, and one **quick-reply** button
       `Lihat tugas`. Wait for Meta's approval (until then the reminder falls back to email):
@@ -445,9 +445,6 @@ BRI does this part in Meta; the service only needs the IDs and two secrets after
         Lihat tugas untuk detail."
       - `grc_update_tugas` (a notice when the person has not written in 24 hours): "Update tugas
         GRC {{1}}: {{2}}. Ketuk Lihat tugas untuk detail."
-      - `grc_tugas_baru` (asking a person to accept a Manager's assignment, section 23):
-        "Tugas GRC baru dari manager untuk Anda: {{1}} – {{2}}. Ketuk Terima untuk mengambilnya,
-        atau Tolak bila tidak bisa." Two quick-reply buttons: `Terima` and `Tolak`.
       The old `grc_daily_reminder` is no longer sent and can be deleted. Templates are paid
       *utility* messages when the person has not written to the bot in the last 24 hours.
 - [ ] Sheet: add a `WhatsApp` column to **Staff** (international format, e.g. `+852 9123 4567`)

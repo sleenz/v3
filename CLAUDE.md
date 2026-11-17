@@ -14,7 +14,9 @@ wrong, stop and ask; do not invent behaviour.**
   One exception, approved by the owner on 10 Nov 2026 (DESIGN section 21): the AI reads the
   sender's own PROMPT line (**that line only**: no request text, no PDF) for owner, reviewer and
   deadline, with the rules as fallback and check. Names must appear in the line and are matched
-  to Staff by rules; the task is flagged and still waits for the manager's approval.
+  to Staff by rules; the task is flagged. Since 17 Nov 2026 (DESIGN section 26) a PROMPT from
+  the Manager, or from full-time staff for themselves or their reports, starts the task at once;
+  anything the reading is unsure about still waits for the manager's approval.
 - Keep `extract/rules.py`, `extract/clean.py` and `route.py` pure (no network, no Google clients) so
   they are fully unit-testable.
 - All Google APIs sit behind small classes (`SheetStore`, `DriveStore`, `GmailClient`, `ChatClient`,
