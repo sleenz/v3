@@ -12,8 +12,11 @@ owner** with you (marked 👤).
 
 ## 1. What you receive
 
-- [ ] Access to the GitHub repository **`sleenz/v3`** (you are added as a collaborator). The
-      branch `main` is the code to deploy.
+- [ ] The company GitHub repository **`sfgbtech/grc-task-tracker`**
+      (<https://github.com/sfgbtech/grc-task-tracker>). The branch `main` is the code to deploy.
+      The GRC team uploads each version there; check that the file list starts with the hidden
+      files `.dockerignore`, `.gcloudignore`, `.gitattributes` and `.gitignore` (they keep keys
+      and local files out of the build).
 - [ ] The **GRC Google Sheet**, shared with you as Editor, and its **Sheet ID** (the part of the
       link between `/d/` and `/edit`).
 - [ ] The **bot mailbox** address: a company Google Workspace account the service reads and
@@ -59,7 +62,8 @@ file, chat or email.
 
 Follow `SETUP_GUIDE.md` in order, in **Cloud Shell** of the company project:
 
-1. **Step 1**: clone `https://github.com/sleenz/v3.git` to `~/V2`, select the project.
+1. **Step 1**: clone `https://github.com/sfgbtech/grc-task-tracker.git` to `~/V2`, run
+   `chmod +x deploy/*.sh` (uploaded files lose the "runnable" flag), select the project.
 2. **Step 2**: `deploy/setup_gcp.sh` (APIs, service accounts, empty secrets, queue, topic).
    Region and all names are fixed in `deploy/config.sh` (`asia-southeast2`, service `v2-git`);
    do not rename them.
@@ -87,7 +91,11 @@ Follow `SETUP_GUIDE.md` in order, in **Cloud Shell** of the company project:
    the timed runs and points the bot's Gmail push at the company project.
 3. **Test together**: guide **step 10**:
    - a new email to the bot is logged in Master and answered;
-   - an approved task emails its Doer within 2 minutes, with the files attached;
+   - from the Manager's mailbox, a request whose first line is `PROMPT: assign this to <name>`
+     with a PDF: the reply says "Assigned to <name>; started", and within 2 minutes that person
+     gets the assignment email with the PDF (DESIGN section 26);
+   - a request without a PROMPT stays Proposed; approving it in the sheet (Status Not Started)
+     emails its Doer within 2 minutes, with the files attached;
    - a reminder can be forced with `gcloud scheduler jobs run grc-reminders --location=asia-southeast2`.
 4. **When it works:**
    - 👤 In the bot's Google Account > Security > Third-party connections, remove the **older**
@@ -103,7 +111,7 @@ the same loop) while you fix it. Unread mail waits in the bot's inbox.
 
 | When | What |
 |---|---|
-| A code update is merged | `cd ~/V2 && git pull`, then `deploy/deploy.sh` (and `deploy/setup_scheduler.sh` if the PR says so) |
+| The GRC team uploads a new version to `sfgbtech/grc-task-tracker` | `cd ~/V2 && git pull && chmod +x deploy/*.sh`, then `deploy/deploy.sh` (and `deploy/setup_scheduler.sh` if they say so) |
 | The bot's password changes | The Gmail token stops: redo guide step 3c, then `deploy/deploy.sh --skip-tests` |
 | Something stops working | Guide "When something does not work": the log command first |
 | The Apps Script changes | The GRC team pastes it into the sheet (it lives in the sheet, not in Cloud Run) |

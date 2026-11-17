@@ -77,7 +77,7 @@ Open <https://console.cloud.google.com>, select your project at the top, and cli
 Get the code. Use **one** of these:
 
 ```bash
-git clone https://github.com/sleenz/v3.git ~/V2
+git clone https://github.com/sfgbtech/grc-task-tracker.git ~/V2
 ```
 
 (A private repository asks you to sign in: run `gh auth login` once first.)
@@ -96,8 +96,14 @@ gcloud config set project YOUR-PROJECT-ID
 
 Your prompt now ends with `~/V2 (YOUR-PROJECT-ID)$`.
 
-If a `deploy/...` command later says **Permission denied**, run it with `bash` in front (for
-example `bash deploy/setup_gcp.sh`), or run once: `chmod +x deploy/*.sh`.
+Make the deploy scripts runnable (files uploaded through the GitHub website lose this):
+
+```bash
+chmod +x deploy/*.sh
+```
+
+If a `deploy/...` command still says **Permission denied**, run it with `bash` in front (for
+example `bash deploy/setup_gcp.sh`).
 
 ---
 
