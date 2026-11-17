@@ -27,7 +27,10 @@ PERSONAL_SLOTS = (MORNING, DUE_TODAY, LAST_CALL)
 OVERDUE = "overdue"
 STALE = "stale"
 REVIEW_WAITING = "review_waiting"
-STALE_STATUSES = frozenset({"Not Started", "In Progress", "Returned"})
+ACCEPT_WAITING = "accept_waiting"  # section 23
+APPROVED_SUBMIT = "approved_submit"  # section 28: approved, not submitted yet
+RETURNED_REVISE = "returned_revise"  # section 28: returned with feedback, not back in review
+STALE_STATUSES = frozenset({"Not Started", "In Progress"})  # Returned has its own daily rule
 TEMPLATE_LANGUAGE = "id"
 TEMPLATE_MORNING = "grc_pagi"
 TEMPLATE_DUE = "grc_jatuh_tempo"
@@ -146,6 +149,15 @@ def morning_triggers(
             reviewer = default_reviewer(task.reviewer, task.doer, staff)
             if reviewer is not None:
                 triggers.append(Trigger(REVIEW_WAITING, task.id, reviewer.name))
+        if doer is not None and task.status == "Approved":  # every morning until submitted
+            triggers.append(Trigger(APPROVED_SUBMIT, task.id, doer.name))
+        if doer is not None and task.status == "Returned":  # every morning until resent
+            triggers.append(Trigger(RETURNED_REVISE, task.id, doer.name))
+    for task in tasks:  # section 23: a Manager's assignment not answered yet
+        if task.id and task.awaiting_acceptance:
+            doer = find_person(task.doer, staff)
+            if doer is not None:
+                triggers.append(Trigger(ACCEPT_WAITING, task.id, doer.name))
     return triggers
 
 
@@ -188,8 +200,14 @@ def manager_sections(tasks: Iterable[Task], today: date) -> list[tuple[str, list
         ("Overdue", [t for t in current if t.due_date and t.due_date < today]),
         ("Due today", [t for t in current if t.due_date == today]),
         ("Waiting for review", [t for t in current if t.status == "In Review"]),
-        ("Awaiting approval", [t for t in every if t.status == "Proposed"]),
+        (
+            "Awaiting approval",
+            [t for t in every if t.status == "Proposed" and not t.awaiting_acceptance],
+        ),
         ("Blocked", [t for t in current if t.status == "On Hold"]),
+        ("Waiting for acceptance", [t for t in every if t.awaiting_acceptance]),
+        ("Approved, not submitted yet", [t for t in current if t.status == "Approved"]),
+        ("Returned for changes", [t for t in current if t.status == "Returned"]),
     ]
 
 
@@ -226,13 +244,21 @@ def rule_label(rule: str, config: AppConfig) -> str:
         OVERDUE: "Overdue",
         STALE: f"Not updated for {config.stale_after_days}+ days",
         REVIEW_WAITING: "Waiting for your review",
+        APPROVED_SUBMIT: (
+            "Approved: submit it, then reply: submitted G-… <how> (email, WhatsApp, hardcopy…)"
+        ),
+        RETURNED_REVISE: (
+            "Returned with feedback: revise and send review G-… again (status G-… shows the notes)"
+        ),
+        ACCEPT_WAITING: "Assigned to you, waiting for your answer (reply YES or NO)",
         DUE_TODAY: "Due today, not done yet",
         LAST_CALL: "Last call: due today, not done yet",
     }.get(rule, rule)
 
 
 def _rule_order(rule: str) -> tuple[int, int]:
-    order = [LAST_CALL, DUE_TODAY, OVERDUE, REVIEW_WAITING]
+    order = [ACCEPT_WAITING, LAST_CALL, DUE_TODAY, OVERDUE, RETURNED_REVISE, APPROVED_SUBMIT,
+             REVIEW_WAITING]  # fmt: skip
     if rule in order:
         return (order.index(rule), 0)
     if rule.startswith("due_in_"):

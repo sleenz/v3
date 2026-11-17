@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 
 from pydantic import BaseModel
 
-from app import clock, outbox, recurring
+from app import acceptance, clock, outbox, recurring
 from app.events import should_wait
 from app.gmail import GmailAuthError, GmailClient
 from app.models import (
@@ -50,6 +50,7 @@ class ChangesRun(BaseModel):  # counts only (no names or emails in logs)
     emailed: int = 0
     not_sent: int = 0
     waiting: int = 0  # outside working hours: sent at the next Workday start (section 22)
+    asked: int = 0  # assignees asked to accept a Manager's assignment (section 23)
 
 
 def _state_row(task: Task, notified_doer: str, notified_at: datetime | None) -> StateRow:
@@ -95,8 +96,19 @@ def run_changes(
         rows[task.id] = _state_row(task, notified_doer, notified_at)
         if previous is not None and previous.status != task.status:
             _status_event(store, gmail, task, sheet_url, wa)  # v1.4: a review step in Sheet
+            if previous.status == "Proposed" and task.acceptance.strip().lower() in (
+                "pending",
+                "asked",
+            ):  # the Manager started it in the Sheet: no answer is waited for any more
+                store.update_task(task.id, {"Acceptance": ""})
+                task = task.model_copy(update={"acceptance": ""})
         doer = task.doer.strip()
-        if task.status not in OPEN_STATUSES or not doer or doer == notified_doer:
+        # Section 27: a PROMPT assignment (Proposed, Acceptance Pending) gets the assignment
+        # email with the files and the YES / NO question, once per Doer.
+        asking = acceptance.pending(task) and bool(doer)
+        if asking and acceptance.asked(store, task) and doer == notified_doer:
+            continue  # this Doer has the files and the question (a new Doer gets them: QA6-A4)
+        if not asking and (task.status not in OPEN_STATUSES or not doer or doer == notified_doer):
             continue
         person = find_person(doer, staff)
         if person is not None and person.paused:
@@ -106,6 +118,11 @@ def run_changes(
             continue
         try:
             email = _assignment_with_files(task, staff, sheet_url, gmail)
+            if asking:
+                email = acceptance.with_question(email, task)
+        except FilesUnavailable:
+            run.not_sent += 1  # held: the next run fetches the files again
+            continue
         except MissingEmail:
             run.not_sent += 1
             if NO_EMAIL_FLAG not in task.flags:
@@ -124,11 +141,16 @@ def run_changes(
             )
             continue
         sent_at = clock.now()
+        kind = acceptance.ASK_KIND if asking else "assigned"
         if sent is not None:
-            outbox.record(store, "Email", sent.id, doer, [task.id], "assigned", sent.thread_id)
+            outbox.record(store, "Email", sent.id, doer, [task.id], kind, sent.thread_id)
         rows[task.id] = _state_row(task, doer, sent_at)
         run.emailed += 1
-        if wa is not None:  # section 22: also on WhatsApp, with buttons
+        if asking:
+            run.asked += 1
+            acceptance.mark_asked(store, task)
+            acceptance.ask_whatsapp(store, wa, task)
+        elif wa is not None:  # section 22: also on WhatsApp, with buttons
             try:
                 from app.wa_ui import notify_whatsapp
 
@@ -167,7 +189,9 @@ def _status_event(
 def _assignment_with_files(
     task: Task, staff: list[StaffMember], sheet_url: str, gmail: GmailClient
 ) -> OutgoingEmail:
-    """The assignment email with the task's files from the bot mailbox (v1.4 decision F4)."""
+    """The assignment email with the task's files from the bot mailbox (v1.4 decision F4).
+    When the files cannot be fetched it raises `FilesUnavailable`: the email is held and the
+    next run tries again, so nobody gets an assignment without its files (section 27)."""
     email = assignment_email(task, staff, sheet_url)
     try:
         files = gmail.task_files(task.id, task.source_id)
@@ -177,8 +201,12 @@ def _assignment_with_files(
         logger.warning(
             "task_files_failed", extra={"task_id": task.id, "error_type": type(error).__name__}
         )
-        files = []
+        raise FilesUnavailable(task.id) from error
     return with_files(email, files)
+
+
+class FilesUnavailable(Exception):
+    """The bot mailbox did not give the task's files this time."""
 
 
 def send_assignment(store: SheetStore, gmail: GmailClient, task: Task, sheet_url: str) -> bool:

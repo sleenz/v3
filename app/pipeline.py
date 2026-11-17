@@ -59,6 +59,11 @@ class Services:
 
 def next_step(task: Task) -> str:
     """What happens next, for the reply to the sender."""
+    if task.awaiting_acceptance:  # section 27
+        return (
+            f"Assigned to {task.doer}. They get the assignment email with the files within a few "
+            "minutes (in working hours) and are asked YES or NO."
+        )
     if task.status != "Proposed":
         return (
             f"Assigned to {task.doer}; started. They get the assignment email with the files "
@@ -185,6 +190,21 @@ class PromptDecision:
     due: date | None = None
     flags: list[str] = field(default_factory=list)
     support: list[str] = field(default_factory=list)  # section 25: named with the owner
+
+
+_ME = re.compile(
+    r"(?<!\w)((?:to|ke|kepada|untuk|assign|assign this to|tugaskan|kasih|serahkan)\s+)"
+    r"(?:me|myself|saya|aku|gue|gw)(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def me_is(prompt: str, sender: StaffMember | None) -> str:
+    """ "assign this to me", "kasih ke saya": the sender's Staff name (section 26). Only right
+    after an assignment word, so "saya minta deadline Jumat" stays as it is."""
+    if sender is None:
+        return prompt
+    return _ME.sub(lambda found: found.group(1) + sender.name, prompt)
 
 
 def decide_prompt(
@@ -333,8 +353,9 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
     staff = store.staff()
     decision = PromptDecision()
     if note:
-        masked_prompt = mask_text(note, mask_emails=config.mask_emails_for_ai)
-        decision = decide_prompt(note, today, staff, services.ai, masked_prompt)
+        prompt_read = me_is(note, submitter)  # "assign this to me / ke saya": the sender
+        masked_prompt = mask_text(prompt_read, mask_emails=config.mask_emails_for_ai)
+        decision = decide_prompt(prompt_read, today, staff, services.ai, masked_prompt)
         flags.extend(decision.flags)
     body = unwrapped.body
 
@@ -469,18 +490,24 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
     if note:
         notes = "\n".join(part for part in (notes, f"Sender's PROMPT: {note}") if part)
     source = raw.source_id if raw.source == "Recurring" else raw.source
-    # Section 26: a PROMPT that names the owner is the assignment. From the Manager, or from
-    # full-time staff for themselves or someone who reports to them, the task starts at once and
-    # the change job emails the Doer the files. It waits for the Manager when the owner is
-    # unclear, the person is away, or the sender may not assign that person.
-    status = "Proposed"
+    # Sections 26-27: a PROMPT that names the owner is the assignment, from the Manager, or from
+    # full-time staff for themselves or someone who reports to them. The Doer at once gets the
+    # assignment email with the files and is asked YES (In Progress) or NO: Status Proposed,
+    # Acceptance Pending. Naming yourself needs no answer. Without the `Acceptance` column the
+    # task simply starts (section 26). It waits for the Manager when the owner is unclear, the
+    # person is away, or the sender may not assign that person.
+    status, acceptance = "Proposed", ""
     doer_name = routed.doer or routed.owner or ""
     if note and decision.owner and doer_name:
         hold = assignment_hold(submitter, find_person(doer_name, staff))
-        if hold is None and not prompt_unsure(flags):
-            status = "Not Started"
-        else:
+        if hold is not None or prompt_unsure(flags):
             flags.append(f"{HOLD_FLAG} ({hold})" if hold else HOLD_FLAG)
+        elif submitter is not None and doer_name.casefold() == submitter.name.casefold():
+            status, acceptance = "Not Started", "Accepted"
+        elif "Acceptance" in store.master_header():
+            acceptance = "Pending"
+        else:
+            status = "Not Started"
     team = {routed.owner or "", doer_name} if note and decision.owner else set()
     support = [name for name in decision.support if name not in team] if team else []
     task = Task(
@@ -496,6 +523,7 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
         start=raw.received_at.astimezone(clock.TZ).date(),
         due_date=due_date,
         status=status,
+        acceptance=acceptance if "Acceptance" in store.master_header() else "",
         last_updated=clock.now(),
         notes=notes,
         flag="; ".join(dict.fromkeys(flags)),

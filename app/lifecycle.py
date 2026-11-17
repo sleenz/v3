@@ -281,7 +281,14 @@ def notify(
         lines = [f"{task.id} was {verdict}: {task.title}", f"Due: {due}"]
         if event == "returned" and task.review_notes:
             lines += ["", f"Review notes: {task.review_notes}"]
-        lines += ["", f"When it is done, reply: done {task.id} (attach the proof).", link]
+        if event == "approved":
+            next_line = (
+                f"When you have submitted it, reply: submitted {task.id} <how and when>, "
+                "e.g. hardcopy to OJK today 15:30 (a file as proof is optional)."
+            )
+        else:
+            next_line = f"Revise it, then reply: review {task.id} (attach the new file)."
+        lines += ["", next_line, link]
         _send(
             store,
             gmail,
@@ -313,6 +320,39 @@ def notify(
         for manager in managers(staff):
             _send(store, gmail, email_of(manager.name), _subject(task, "extension asked"),
                   lines, person=manager.name, task_id=task.id, kind=event)  # fmt: skip
+    elif event == "declined":
+        lines = [
+            f"{task.doer or 'The assignee'} declined {task.id}: {task.title}",
+            f"Reason: {note or 'none given'}",
+            f"Due: {due}",
+            "",
+            "To hand it to someone else, reply with the first line:",
+            f"  assign {task.id} to <name>",
+            "(they are asked to accept it), or change Doer and Status in the sheet.",
+            "",
+            link,
+        ]
+        for manager in managers(staff):
+            _send(store, gmail, email_of(manager.name), _subject(task, "declined"), lines,
+                  person=manager.name, task_id=task.id, kind=event)  # fmt: skip
+    elif event == "submitted":
+        method, when, details = [*note.split("|", 2), "", "", ""][:3]
+        lines = [
+            f"{task.doer or 'The Doer'} submitted {task.id}: {task.title}",
+            f"How: {method or '-'}",
+            f"When: {when or '-'}",
+            f"Details: {details or '-'}",
+            f"Due was: {due}",
+            "",
+            link,
+        ]
+        people = {p.name.casefold(): p for p in managers(staff)}
+        owner = find_person(task.owner, staff)
+        if owner is not None and owner.name.casefold() != task.doer.strip().casefold():
+            people.setdefault(owner.name.casefold(), owner)
+        for person in people.values():
+            _send(store, gmail, email_of(person.name), _subject(task, "submitted"), lines,
+                  person=person.name, task_id=task.id, kind=event)  # fmt: skip
     elif event in ("extension_approved", "extension_rejected"):
         verdict = "approved" if event == "extension_approved" else "rejected"
         lines = [f"The extension for {task.id} was {verdict}: {task.title}", f"Due: {due}", link]
@@ -397,7 +437,8 @@ def _list_reply(title: str, tasks: list[Task], person: StaffMember | None = None
 
 CHANGES = frozenset({"progress", "review", "done", "approve", "return", "assign", "blocked",
                      "extension", "extension_ok", "extension_no", "snooze", "undo",
-                     "note"})  # fmt: skip
+                     "note", "accept", "decline", "submitted", "sheet_edit"})  # fmt: skip
+ANSWERS = frozenset({"accept", "decline"})  # the answer is the confirmation (section 23)
 
 
 def run_command(command: Command, ctx: CommandContext) -> CommandResult:
@@ -428,6 +469,9 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
     tasks = [t for t in store.tasks() if t.id]
     staff = store.staff()
     is_manager = actor.role == "Manager"
+
+    if command.name == "sheet_edit":  # section 29, on the Manager's YES
+        return _sheet_edit(command, ctx, now)
 
     if command.name in ("mine", "today", "week"):
         mine = _mine(tasks, actor)
@@ -479,6 +523,16 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
 
     if command.name == "status":  # section 24: a read, any Staff member, any status
         return CommandResult(task_status(task, staff, today), task.id)
+
+    if command.name in ANSWERS:
+        return _answer_assignment(command, task, ctx)
+
+    if (
+        command.name == "assign"
+        and task.status == "Proposed"
+        and (task.awaiting_acceptance or task.acceptance.strip().lower() == "declined")
+    ):
+        return _reassign_for_acceptance(command, task, ctx, staff)
 
     if command.name == "files":
         reviewer = default_reviewer(task.reviewer, task.doer, staff)
@@ -638,7 +692,70 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
         _apply(ctx, task, "Done", changes)
         return CommandResult(f"{task.id} is Done. Thank you.", task.id, changed=True)
 
+    if command.name == "submitted":
+        return _submitted(command, task, ctx, now)
+
     return CommandResult("I didn't understand that command. Send help.")
+
+
+def _sheet_edit(command: Command, ctx: CommandContext, now: datetime) -> CommandResult:
+    """Apply the Manager's checked cell changes (DESIGN section 29). They are checked again, as
+    the sheet may have changed since the preview."""
+    from app import sheet_edit
+
+    if ctx.actor.role != "Manager":
+        return CommandResult("Only the manager can change the sheet by prompt. Nothing changed.")
+    changes = sheet_edit.load(command.value)
+    good, problems = sheet_edit.check(changes, ctx.store, now.date(), ctx.actor.name)
+    if not good:
+        return CommandResult("Nothing changed: " + "; ".join(problems))
+    written = sheet_edit.apply(good, ctx.store, ctx.actor.name, now, ctx.message_id,
+                               audit_user=ctx.actor.email or ctx.actor.name,
+                               channel=ctx.channel)  # fmt: skip
+    reply = "Changed:\n" + "\n".join(written)
+    if problems:
+        reply += "\nNot changed: " + "; ".join(problems)
+    return CommandResult(reply, good[0].key if good[0].tab == "Master" else None, changed=True)
+
+
+def _submitted(command: Command, task: Task, ctx: CommandContext, now: datetime) -> CommandResult:
+    """The Doer reports how and when the task went to its requester (DESIGN section 28): Status
+    Done, the method and time written, a file or link kept as proof (optional), Managers told."""
+    from app import submission
+
+    if task.review_needed and task.status != "Approved":
+        return CommandResult(
+            f"{task.id} needs review first: send review {task.id} with the file.", task.id
+        )
+    sent = submission.read(command.value, now)
+    if sent is None:
+        return CommandResult(
+            f"How and when was {task.id} submitted? e.g. submitted {task.id} hardcopy to OJK "
+            "today 15:30 (or by email, WhatsApp, portal). Nothing changed.",
+            task.id,
+        )
+    header = ctx.store.master_header()
+    stamp = f"Submitted {sent.at:%d %b %Y %H:%M} by {ctx.actor.name}: {sent.details}"
+    changes: dict[str, Any] = {
+        "Status": "Done",
+        "Submitted date": sent.at.date(),
+        "Notes": f"{task.notes}\n{stamp}" if task.notes else stamp,
+    }
+    if "Submission method" in header:
+        changes["Submission method"] = sent.method
+    if "Submitted at" in header:
+        changes["Submitted at"] = sent.at
+    if ctx.files:
+        ctx.gmail.store_files(task.id, ctx.files)
+        changes["Link"] = files_label(ctx.files)
+    note = f"{sent.method}|{sent.at:%a %d %b %Y %H:%M}|{sent.details}"
+    _apply(ctx, task, "Submitted", changes, "submitted", note)
+    return CommandResult(
+        f"{task.id} is Done: submitted by {sent.method.lower()} on {sent.at:%a %d %b %Y %H:%M}. "
+        "The manager is told. Thank you.",
+        task.id,
+        changed=True,
+    )
 
 
 def task_status(task: Task, staff: list[StaffMember], today: date) -> str:
@@ -665,7 +782,9 @@ def task_status(task: Task, staff: list[StaffMember], today: date) -> str:
         f"{task.id} – {task.title}: {due}, status {task.status}, progress {pct}%"
         f", doer {task.doer or '-'}{support}{review}."
     ]
-    if task.status == "Proposed":
+    if task.awaiting_acceptance:
+        lines.append(f"Waiting for {task.doer or 'the Doer'} to accept.")
+    elif task.status == "Proposed":
         lines.append("Waiting for the manager's approval.")
     if task.status == "On Hold":
         blocked = [n for n in task.notes.splitlines() if n.startswith("Blocked ")]
@@ -678,6 +797,60 @@ def task_status(task: Task, staff: list[StaffMember], today: date) -> str:
     if task.last_updated is not None:
         lines.append(f"Last updated {task.last_updated:%d %b %Y %H:%M}.")
     return "\n".join(lines)
+
+
+def _answer_assignment(command: Command, task: Task, ctx: CommandContext) -> CommandResult:
+    """The Doer answers a PROMPT assignment (DESIGN section 27). They already have the files.
+    Accept: Status In Progress, nothing else is sent. Decline: the task stays Proposed for the
+    Manager, flagged with the reason."""
+    actor = ctx.actor
+    if not task.awaiting_acceptance:  # also a task closed in the Sheet meanwhile (QA-A2)
+        return CommandResult(f"{task.id} is not waiting for your answer.", task.id)
+    if actor.name.casefold() != task.doer.strip().casefold():
+        return CommandResult(f"Only {task.doer or 'the Doer'} can answer for {task.id}.", task.id)
+    if command.name == "accept":
+        _apply(ctx, task, "Accepted", {"Acceptance": "Accepted", "Status": "In Progress"})
+        return CommandResult(
+            f"Thanks, {task.id} is yours and In Progress. The files are in the assignment email.",
+            task.id,
+            changed=True,
+        )
+    reason = command.value.strip() or "no reason given"
+    flag = f"Declined by {actor.name}: {reason}"
+    flags = "; ".join(dict.fromkeys([*task.flags, flag]))
+    _apply(ctx, task, "Declined", {"Acceptance": "Declined", "Flag": flags}, "declined", reason)
+    return CommandResult(
+        f"Declined {task.id}. The manager is told and will reassign it.", task.id, changed=True
+    )
+
+
+def _reassign_for_acceptance(
+    command: Command, task: Task, ctx: CommandContext, staff: list[StaffMember]
+) -> CommandResult:
+    """The Manager hands a declined (or unanswered) task to someone else: they are asked."""
+    actor = ctx.actor
+    if actor.role != "Manager":
+        return CommandResult(f"{task.id} waits for the manager. Nothing changed.", task.id)
+    target, helpers, problem = _team(command.value, actor, staff)
+    if target is None:
+        return CommandResult(f"{problem} Nothing changed.", task.id)
+    owner, doer = owner_and_doer(target, staff)
+    flags = "; ".join(f for f in task.flags if not f.startswith("Declined by"))
+    changes: dict[str, Any] = {"Owner": owner, "Doer": doer, "Flag": flags}
+    if helpers is not None:
+        skip = (owner, doer, task.reviewer.strip())  # never the reviewer (QA-C4)
+        changes["Support"] = "; ".join(h for h in helpers if h not in skip)
+    if doer.casefold() == actor.name.casefold():
+        changes.update({"Acceptance": "Accepted", "Status": "Not Started"})
+        _apply(ctx, task, "Delegated", changes)
+        return CommandResult(f"{task.id} is now yours and started.", task.id, changed=True)
+    changes["Acceptance"] = "Pending"
+    _apply(ctx, task, "Delegated", changes)
+    return CommandResult(
+        f"{task.id} goes to {doer}; they get the files and are asked YES or NO.",
+        task.id,
+        changed=True,
+    )
 
 
 def _day(value: date | None) -> str:

@@ -57,6 +57,7 @@ from app.pipeline import (
     SERVICE_USER,
     Services,
     decide_prompt,
+    me_is,
     process_request,
 )
 from app.route import (
@@ -657,6 +658,10 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
     from app import wa_ui  # section 22: buttons, lists and short questions
 
     wa_ui.touch_window(store, person.name, now)
+    if message.kind in ("text", "media") and progress.already_processed(store, message.id):
+        # the same answer delivered again (QA6-B10); taps have their own "Already done."
+        logger.info("wa_duplicate", extra={"kind": message.kind})
+        return "duplicate"
     if message.kind == "tap":
         if ctx.gmail is None:
             _reply(ctx, message.sender, "Tombol belum bisa dipakai. Coba lagi nanti.")
@@ -690,7 +695,14 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
         prompt = parse_prompt(text)
         if prompt is not None:
             return _handle_prompt(message, prompt, ctx, now)
-        answered = _deadline_answer(message, text, ctx, now)
+        if person.role == "Manager" and not message.forwarded and ctx.gmail is not None:
+            edited = _manager_edit(message, person, ctx, now)  # section 29
+            if edited is not None:
+                return edited
+        # section 27 before the deadline YES: "ya" replying to the assignment accepts (QA-A5)
+        answered = _acceptance_answer(message, person, ctx) if message.context_id else None
+        if answered is None:
+            answered = _deadline_answer(message, text, ctx, now)
         if answered is not None:
             return answered
     if message.kind == "other":
@@ -706,6 +718,65 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
 # --- Typed replies (DESIGN section 22, part C) ---------------------------------------------------
 
 CONFIRM_BUTTONS = [("cf:yes", "Ya"), ("cf:edit", "Ubah"), ("cf:no", "Batal")]
+
+
+def _manager_edit(
+    message: WAMessage, person: StaffMember, ctx: WaContext, now: datetime
+) -> str | None:
+    """The Manager changes Master, Staff or Config by prompt (DESIGN section 29): rules or AI,
+    checked by code, shown before → after with [Ya] [Ubah] [Batal]. None: not an edit."""
+    from app import sheet_edit
+    from app.extract.clean import mask_text
+
+    store = ctx.store
+    text = message.text.strip()
+    if not text or _open_draft(store.wa_pending(), message.sender, now) is not None:
+        return None  # inside a request's 30-second window: it joins the draft
+    if parse_command(text, has_context=bool(message.context_id)) is not None:
+        return None  # a command, not an edit (QA6-C9)
+    changes = sheet_edit.by_rules(text)
+    config = store.config()
+    if changes is None and config.ai_provider != "Off":
+        masked = mask_text(text, mask_emails=config.mask_emails_for_ai)
+        reading = sheet_edit.by_ai(ctx.services.ai, masked, store, now.date())
+        if reading is not None and reading.is_edit:
+            changes = reading.changes
+    if not changes:
+        return None
+    good, problems = sheet_edit.check(changes, store, now.date(), person.name)
+    if not good:
+        _reply(ctx, message.sender, "Tidak bisa diubah: " + "; ".join(problems) + ".")
+        return "edit_refused"
+    pending = replies.Pending("sheet_edit", None, sheet_edit.dump(good), message.id)
+    if not replies.propose(store, person.name, "WhatsApp", pending, now):
+        _reply(ctx, message.sender, "Belum bisa menyimpan konfirmasi (tab _conversations "
+               "belum ada). Tidak ada yang diubah.")  # fmt: skip
+        return "reply_no_confirm_tab"
+    body = "Ubah sheet:\n" + sheet_edit.preview(good)
+    if problems:
+        body += "\nTidak diubah: " + "; ".join(problems)
+    try:
+        message_id = ctx.wa.send_buttons(message.sender, body[:1000] + "\nBenar?", CONFIRM_BUTTONS)
+        outbox.record(store, "WhatsApp", message_id, person.name, [""], "confirm")
+    except Exception as error:
+        logger.error("wa_confirm_failed", extra={"error_type": type(error).__name__})
+    return "edit_proposed"
+
+
+def _acceptance_answer(message: WAMessage, person: StaffMember, ctx: WaContext) -> str | None:
+    """Section 27: "ya" / "tidak bisa, cuti" typed in reply to the Doer's assignment message."""
+    from app import acceptance
+
+    if message.media:
+        return None
+    linked = _context_task(ctx, message, implicit=False)
+    task = next((t for t in ctx.store.tasks() if t.id == linked), None) if linked else None
+    if task is None or not acceptance.pending(task):
+        return None
+    answer = acceptance.answer_in(message.text.strip())
+    if answer is None or task.doer.strip().casefold() != person.name.casefold():
+        return None
+    return _run_now(message, person, ctx, Command(answer[0], task.id, answer[1]))
 
 
 def _handle_reply(
@@ -980,6 +1051,8 @@ def _apply_late_prompt(
     replies: list[str] = []
     audits: list[tuple[str, str, str]] = []
     flags = list(task.flags)
+    sender_person = _person(store, sender) if sender else None
+    prompt = me_is(prompt, sender_person)  # "assign this to me" (section 26)
     decision = decide_prompt(prompt, now.date(), store.staff(), ctx.services.ai)
     name = decision.owner
     flags += [f for f in decision.flags if "not found" not in f and "couldn't read" not in f]
@@ -1011,8 +1084,15 @@ def _apply_late_prompt(
         doer = routed.doer or routed.owner or ""
         hold = assignment_hold(person, find_person(doer, store.staff()))
         if hold is None and not prompt_unsure(flags):
-            changes["Status"] = "Not Started"  # the change job emails the files (section 26)
-            audits.append(("Status", task.status, "Not Started"))
+            # sections 26-27: as for any PROMPT; the change job emails the files (QA6-A3)
+            if "Acceptance" in store.master_header() and doer.casefold() != person.name.casefold():
+                changes["Acceptance"] = "Pending"
+                audits.append(("Acceptance", task.acceptance, "Pending"))
+            else:
+                changes["Status"] = "Not Started"
+                if "Acceptance" in store.master_header():
+                    changes["Acceptance"] = "Accepted"
+                audits.append(("Status", task.status, "Not Started"))
     if decision.reviewer:
         changes.update({"Reviewer": decision.reviewer, "Needs review": "Yes"})
         replies.append(f"reviewer is {decision.reviewer}")
@@ -1031,7 +1111,10 @@ def _apply_late_prompt(
     problems = [part for part in replies if part.startswith("I couldn't")]
     reply = f"Updated {task_id}: " + ", ".join(done) + "." if done else ""
     reply = reply or f"Added your PROMPT to {task_id} as a note."
-    if changes.get("Status") == "Not Started":
+    if changes.get("Acceptance") == "Pending":
+        doer = changes.get("Doer") or task.doer
+        tail = f"{doer} gets the assignment email with the files and is asked YES or NO."
+    elif changes.get("Status") == "Not Started":
         doer = changes.get("Doer") or task.doer
         tail = f"Started: {doer} gets the assignment email with the files within a few minutes."
     else:

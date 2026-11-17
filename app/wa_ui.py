@@ -53,6 +53,11 @@ QUESTIONS: dict[str, str] = {
     "done_proof": "Kirim file bukti untuk {task} (dokumen atau foto), atau ketik batal.",
     "review_file": "Kirim file untuk review {task}, atau ketik 'tanpa file' (atau batal).",
     "return_notes": "Apa yang perlu diperbaiki di {task}? Ketik catatannya (atau batal).",
+    "decline_reason": "Kenapa tidak bisa mengambil {task}? Ketik alasannya (atau batal).",
+    "submit_how": (
+        "Bagaimana dan kapan {task} dikirim? Contoh: hardcopy ke OJK hari ini 15:30, atau via "
+        "email/portal. Boleh lampirkan bukti (atau batal)."
+    ),
 }
 EXPIRED_TEXT = "Waktu menjawab untuk {task} sudah habis (30 menit). Tidak ada yang diubah."
 
@@ -186,7 +191,7 @@ def card_buttons(
     second = (
         (tap_id("rev", task.id), "Kirim review")
         if task.review_needed and task.status != "Approved"
-        else (tap_id("done", task.id), "Selesai")
+        else (tap_id("sub", task.id), "Sudah dikirim")  # section 28
     )
     return [
         (tap_id("upd", task.id), "Update progres"),
@@ -314,7 +319,7 @@ def handle_tap(message: Any, person: StaffMember, ctx: Any, now: datetime) -> st
         return "tap_progress_list"
     if action == "more":
         rows = [
-            (tap_id("done", task_id), "Selesai", "Kirim bukti, tugas selesai"),
+            (tap_id("sub", task_id), "Sudah dikirim", "Cara dan waktu pengiriman"),
             (tap_id("blk", task_id), "Terhambat", "Tulis apa yang menghambat"),
             (tap_id("ext", task_id), "Minta perpanjangan", "Usulkan tanggal baru"),
             (tap_id("snz", task_id), "Ingatkan besok", "Tanpa pengingat sampai besok"),
@@ -324,9 +329,12 @@ def handle_tap(message: Any, person: StaffMember, ctx: Any, now: datetime) -> st
                                       rows, "Lainnya")  # fmt: skip
         _record(ctx.store, message_id, person, [task_id], "list")
         return "tap_more"
+    if action == "acc":  # section 23: Terima
+        return _finish(ctx, person, message, Command("accept", task_id))
     steps: dict[str, ConversationStep] = {
         "blk": "blocked_reason", "ext": "extension_date", "done": "done_proof",
-        "rev": "review_file", "ret": "return_notes",
+        "rev": "review_file", "ret": "return_notes", "dec": "decline_reason",
+        "sub": "submit_how",
     }  # fmt: skip
     if action in steps:
         task = next((t for t in ctx.store.tasks() if t.id == task_id), None)
@@ -391,6 +399,14 @@ def handle_answer(
         return _finish(ctx, person, message, Command("extension", task_id, text))
     if step == "return_notes" and text:
         return _finish(ctx, person, message, Command("return", task_id, text))
+    if step == "decline_reason" and text:
+        return _finish(ctx, person, message, Command("decline", task_id, text))
+    if step == "submit_how" and text:  # section 28: a file with it is the proof
+        from app import submission
+
+        if submission.read(text, clock.now()) is not None:
+            return _finish(ctx, person, message, Command("submitted", task_id, text), files)
+        # no method or no usable time: ask again, keeping the question open (QA6-B9)
     if step == "done_proof" and files:
         return _finish(ctx, person, message, Command("done", task_id), files)
     if step == "review_file" and (files or text.lower() in NO_FILE_WORDS):
@@ -430,8 +446,9 @@ def _notice(event: str, task: Task, note: str, staff: list[StaffMember]
         out.append(
             (
                 doer,
-                f"{task.id} disetujui reviewer. Kirim bukti untuk menyelesaikan.",
-                [(tap_id("done", task.id), "Selesai")],
+                f"{task.id} disetujui reviewer. Kirim ke peminta, lalu ketuk Sudah dikirim (atau "
+                f"balas: submitted {task.id} <cara dan waktu>).",
+                [(tap_id("sub", task.id), "Sudah dikirim")],  # section 28 (QA6-B11)
             )
         )
     elif event == "returned" and doer is not None:
@@ -467,6 +484,25 @@ def _notice(event: str, task: Task, note: str, staff: list[StaffMember]
                         (tap_id("exty", task.id, iso), "Setuju"),
                         (tap_id("extn", task.id, iso), "Tolak"),
                     ],
+                )
+            )
+    elif event == "submitted":
+        method, when, details = [*note.split("|", 2), "", "", ""][:3]
+        people = {p.name.casefold(): p for p in [*managers(staff), owner] if p is not None}
+        people.pop(task.doer.strip().casefold(), None)
+        for person in people.values():  # how, when, the details and the due date (QA6-B12)
+            out.append((person, f"{task.doer or 'Doer'} sudah mengirim {task.id} – {task.title}: "
+                                f"{method or '-'}, {when or '-'}. Detail: {details or '-'}. "
+                                f"Due: {due}.", []))  # fmt: skip
+    elif event == "declined":
+        for manager in managers(staff):
+            out.append(
+                (
+                    manager,
+                    f"{task.doer or 'Assignee'} menolak {task.id} – {task.title}: "
+                    f"{note or '-'}. Kirim 'assign {task.id} to <nama>' untuk "
+                    "menyerahkan ke orang lain.",
+                    [],
                 )
             )
     elif event in ("extension_approved", "extension_rejected") and doer is not None:

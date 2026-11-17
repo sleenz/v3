@@ -1032,3 +1032,98 @@ for PROMPTs from people who may assign.
 - **No PROMPT** (rules-only routing): unchanged, the task waits for the Manager's approval.
 - A late WhatsApp PROMPT (section 21.6) follows the same rules; from someone who may not assign
   it is added to Notes only.
+
+## 27. YES / NO with the files (approved 17 Nov 2026)
+
+Brings back the Doer's answer of section 23, but after they have the files. Section 26 still
+decides who may assign and when a PROMPT waits for the Manager.
+
+- **Logging.** A PROMPT assignment that may start (section 26) is written `Proposed` with Master
+  `Acceptance` = `Pending`. Naming yourself needs no answer (`Not Started`, `Accepted`). Without
+  the `Acceptance` column the task simply starts (`Not Started`), as in section 26.
+- **The email.** The change job (working hours) sends the Doer the usual assignment email:
+  original message, files attached, cc Owner and Support. It starts with "Reply YES to start
+  this task (Status becomes In Progress). Reply NO and the reason if you cannot take it" and
+  its subject ends "– reply YES or NO". Acceptance becomes `Asked`; the email is recorded in
+  `_outbox` as kind `accept_ask`. On WhatsApp the Doer also gets [Terima] [Tolak] (template
+  `grc_tugas_baru` outside the 24-hour window).
+- **YES** (a YES in the thread, Terima, a typed "ya" in reply on WhatsApp, `accept G-…`):
+  Status `In Progress`, Acceptance `Accepted`. Nothing else is sent.
+- **NO + reason** (also Tolak, then the reason; `decline G-… <reason>`): stays `Proposed`,
+  Acceptance `Declined`, flagged `Declined by <name>: <reason>`; every Manager is told with the
+  hint `assign G-… to <name>`, which sets `Pending` again, so the new person gets the email.
+- Only the Doer answers. An unclear reply in the thread gets a hint. The morning message lists
+  unanswered assignments first; the manager summary has "Waiting for acceptance".
+- If the files cannot be fetched from the bot mailbox, the email is held (Acceptance stays
+  `Pending`) and the next run tries again: nobody is asked without the files.
+- If the Manager starts the task in the Sheet himself (Status out of Proposed), the question is
+  cleared (Acceptance blank); a later YES gets "not waiting for your answer".
+- "assign this to me", "kasih ke saya" in a PROMPT mean the sender (only right after an
+  assignment word, so "saya minta deadline Jumat" stays as it is).
+
+## 28. Review loop reminders and submission reports (approved 17 Nov 2026)
+
+- **Approved → submit.** Every morning until the task is Done, the Doer's morning message lists
+  it as "Approved: submit it, then reply: submitted G-… <how>". The approval notice says the same.
+- **Returned → revise.** Every morning until it is back In Review, the Doer's morning message
+  lists it as "Returned with feedback: revise and send review G-… again"; the return notice
+  carries the review notes and `status G-…` shows them. Returned no longer also counts as stale.
+- The manager summary adds "Approved, not submitted yet" and "Returned for changes"; "Awaiting
+  approval" no longer counts tasks waiting for the Doer's YES (they are under "Waiting for
+  acceptance"). The WhatsApp summary keeps its five numbers.
+- **Submission report** (`submitted G-0012 hardcopy to OJK today 15:30`, "sudah dikirim …",
+  "terkirim …", a Gemini `submitted` reading of plain words, or **Sudah dikirim** on the
+  WhatsApp card, which asks how and when):
+  - The method is read by rules from the words (Hardcopy, Email, WhatsApp, Portal, Fax; the
+    first one named wins); the date and time from "today", "kemarin", "24/10", "2026-10-24",
+    "23 Okt", "15:30", "jam 3" (1-6 o'clock without "pagi" is the afternoon). A date without a
+    year more than 60 days ahead is last year's. No time means now. No method, an impossible
+    date, a future time or a later word ("besok", "nanti"): the bot asks "How and when was it
+    submitted?" and changes nothing (no YES question). The moment read is kept with the
+    question, so YES writes what was shown.
+  - It writes Status `Done`, `Submitted date`, and the optional Master columns `Submission
+    method` and `Submitted at`, and adds "Submitted <when> by <name>: <as typed>" to Notes. A
+    file or link with it is kept as proof (optional). A typed or emailed report waits for YES
+    like any typed change; the answer to the WhatsApp **Sudah dikirim** question saves at once,
+    like every button flow (section 22).
+  - A task that needs review must be Approved first. Support cannot submit (the Doer's).
+  - Every Manager, and the Owner when not the Doer, is told by email or WhatsApp: how, when,
+    the details and the due date.
+- The typed `done` command (proof file required) still works.
+
+## 29. The Manager changes the sheet by prompt (approved 17 Nov 2026)
+
+The owner asked for an interactive bot: Pak Dicki can have it write in the sheet. Scope chosen:
+Master, Staff and Config, always shown first and applied on YES.
+
+- **Who and how.** Only Staff with Role `Manager`, by a new email, a reply, or WhatsApp text.
+  Forwarded mail and a PROMPT line are never edits (they are requests).
+  - Fixed form, one change per line: `edit G-0012 Priority = High`,
+    `edit staff Staff A Reports to = Staff K`, `edit config Reminder time morning = 09:30`.
+  - Otherwise, with the AI on, plain words ("ubah deadline G-0012 jadi 5 Des", "Staff A lapor ke
+    Staff K", "reminder pagi jam 9:30") go to Gemini (`prompts/edit_v1.md`) with the masked
+    message, the tab column names, the Staff names, the Config settings and today's date. It
+    answers `is_edit` and the cells; not an edit or under 0.6 confident: handled as before.
+    With the AI on, every Manager message that is not a command costs one such call.
+- **Checks (code, not the AI).** The row must exist (task ID in Master, a Staff name, a Config
+  setting; a new setting is added as a row) and the column must be in the tab's header. Never
+  written: Master `ID`, `Weight`, `Source ID`, `Original message`, `Files`, `Last updated`;
+  Staff `Name`, `Staff ID`, `Weighted open load`. Dates, Progress and Status are read by rules;
+  Owner / Doer / Reviewer / Support must match Staff names (section 21 rules). "-" clears a
+  cell. At most 20 changes per message (the rest are listed as left out). What fails is
+  listed with the reason. Every new value is also checked against the model the sheet is
+  loaded with (the task row, the Staff row, the whole Config): a value the service could not
+  read back ("Workday start = banana", "Role = Boss") is refused, as it would stop every job.
+  A command (`approve G-…`, `status G-…`) is never sent to the edit reader. The Manager's own
+  Staff `Email` and `Role` are never changed by prompt (one typo would remove his rights).
+- **Confirmation.** "Reply YES to confirm" with one line per cell, `G-0012 · Due date:
+  2026-11-20 → 2026-12-05` (WhatsApp: [Ya] [Ubah] [Batal]). The question goes to the Manager's
+  own inbox or phone, and an email YES counts only in the thread that asked, so a forged
+  sender's YES elsewhere confirms nothing. The changes are checked again on YES. An edit Gemini
+  read from a new email whose changes all fail is handled as a request.
+  An edit Gemini read from a new email adds "Reply NO if this is a new request instead" (NO
+  logs it, D15); the fixed form's NO only cancels.
+- **Record.** Every cell goes to AuditLog (`Prompt edit (Master|Staff|Config)`, old and new
+  value). Master changes also go to ProgressLog and update `Last updated`, so `undo` works for
+  them; Staff and Config changes are undone by another edit.
+

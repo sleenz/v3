@@ -7,11 +7,13 @@ import pytest
 from app import clock
 from app.models import AppConfig, StaffMember, Task
 from app.reminders import (
+    APPROVED_SUBMIT,
     DUE_TODAY,
     LAST_CALL,
     MANAGER,
     MORNING,
     OVERDUE,
+    RETURNED_REVISE,
     REVIEW_WAITING,
     STALE,
     Trigger,
@@ -166,7 +168,23 @@ def test_manager_sections():
         "Waiting for review": ["G-3"],
         "Awaiting approval": ["G-4"],
         "Blocked": ["G-5"],
+        "Waiting for acceptance": [],
+        "Approved, not submitted yet": [],
+        "Returned for changes": [],
     }
+
+
+def test_approved_and_returned_remind_the_doer_every_morning():
+    old = at(date(2026, 10, 1), 9)  # also long untouched: Returned is not "stale" twice
+    tasks = [task("G-1", **{"Status": "Approved"}),
+             task("G-2", **{"Status": "Returned", "Last updated": old}),
+             task("G-3", **{"Status": "Done"})]  # fmt: skip
+    found = {(t.rule, t.task_id, t.person) for t in morning_triggers(tasks, TEAM, MONDAY, CONFIG)}
+    assert found == {(APPROVED_SUBMIT, "G-1", "Doer One"), (RETURNED_REVISE, "G-2", "Doer One")}
+    assert grouped(morning_triggers(tasks, TEAM, MONDAY, CONFIG))[0][0] == RETURNED_REVISE
+    sections = dict(manager_sections(tasks, MONDAY))
+    assert [t.id for t in sections["Approved, not submitted yet"]] == ["G-1"]
+    assert [t.id for t in sections["Returned for changes"]] == ["G-2"]
 
 
 @pytest.mark.parametrize(

@@ -25,8 +25,8 @@ from app.extract.ai import AIProvider, NotConfigured, NullProvider, _executor
 
 logger = logging.getLogger("grc.reply")
 
-PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "reply_v1.md"
-PROMPT_VERSION = "reply_v1"
+PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "reply_v2.md"
+PROMPT_VERSION = "reply_v2"  # v2: `submitted` (section 28)
 TIMEOUT_SECONDS = 8.0
 TRIES = 2  # one retry
 MIN_CONFIDENCE = 0.6
@@ -34,7 +34,7 @@ MAX_MESSAGE_CHARS = 2000
 
 Intent = Literal[
     "progress", "blocked", "extension", "review", "done", "snooze", "note", "question", "list",
-    "help", "request", "unknown",
+    "help", "request", "unknown", "submitted",
 ]  # fmt: skip
 
 

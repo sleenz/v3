@@ -297,7 +297,7 @@ def test_blank_support_changes_nothing_for_the_doer():
     assert email.cc == [] and "Support:" not in email.text
     titles = [t for _, t in card_buttons(task, person(services.store, "Staff P"),
                                          services.store.staff())]  # fmt: skip
-    assert titles == ["Update progres", "Selesai", "Lainnya"]
+    assert titles == ["Update progres", "Sudah dikirim", "Lainnya"]
 
 
 # --- 3. Permissions ------------------------------------------------------------------------------
@@ -523,7 +523,7 @@ def test_team_prompt_by_the_manager_starts_and_emails_the_doer_cc_support():
     services, gmail = make()
     changes(services, gmail)  # baseline
     task = email_prompt(services, gmail, "PROMPT: assign this to Staff P and Staff A")
-    assert (task.doer, task.supporters, task.status) == ("Staff P", ["Staff A"], "Not Started")
+    assert (task.doer, task.supporters, task.status) == ("Staff P", ["Staff A"], "Proposed")
     changes(services, gmail)
     [email] = assignment_emails(gmail, task.id)
     assert email.to == ["staff.p@example.com"] and email.cc == ["staff.a@example.com"]

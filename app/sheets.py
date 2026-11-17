@@ -50,7 +50,8 @@ DATE_COLUMNS = frozenset(
 )  # fmt: skip
 DATETIME_COLUMNS = frozenset(
     {"Last updated", "Notified at", "Timestamp", "Last at", "Created at", "Updated at",
-     "Sent at", "Queued at", "Started at", "Expires at", "Set at", "Last inbound at"}
+     "Sent at", "Queued at", "Started at", "Expires at", "Set at", "Last inbound at",
+     "Submitted at"}
 )  # fmt: skip
 WA_PENDING = "_wa_pending"
 RECURRING = "Recurring"
@@ -550,6 +551,43 @@ class SheetStore:
                     if str(row[id_index] or "") == task_id:
                         for name, value in changes.items():
                             row[cached.index(name)] = value
+
+    def staff_header(self) -> list[str]:
+        return list(self._tab("Staff").header)
+
+    def setting_values(self) -> dict[str, Any]:
+        """Config `Setting` → raw `Value`, as written in the sheet."""
+        self._tab("Config")
+        return self._settings()
+
+    def setting_names(self) -> list[str]:
+        return list(self.setting_values())
+
+    def update_config(self, setting: str, value: Any) -> None:
+        """Set one Config `Value` by `Setting` (case-insensitive); a setting not there yet is
+        added as a new row (section 29). The cached config is dropped."""
+        with self._lock:
+            [values] = self._backend.get([quote_tab("Config")])
+            tab = TabData.from_values("Config", values)
+            setting_col, value_col = tab.index("Setting"), tab.index("Value")
+            wanted = setting.strip().casefold()
+            row_number = next(
+                (
+                    i + 2
+                    for i, row in enumerate(tab.rows)
+                    if str(row[setting_col] or "").strip().casefold() == wanted
+                ),
+                None,
+            )
+            if row_number is None:
+                row: list[Any] = [""] * len(tab.header)
+                row[setting_col], row[value_col] = to_cell(setting.strip()), to_cell(value)
+                self._backend.append(quote_tab("Config") + "!A1", [row])
+            else:
+                cell = f"{quote_tab('Config')}!{column_letter(value_col)}{row_number}"
+                self._backend.update([(cell, [[to_cell(value)]])])
+            self._tabs.pop("Config", None)
+            self._config = None
 
     def update_staff(self, name: str, changes: dict[str, Any]) -> None:
         """Set cells of one Staff row (matched by Name, case-insensitive), by header.

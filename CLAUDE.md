@@ -15,8 +15,12 @@ wrong, stop and ask; do not invent behaviour.**
   sender's own PROMPT line (**that line only**: no request text, no PDF) for owner, reviewer and
   deadline, with the rules as fallback and check. Names must appear in the line and are matched
   to Staff by rules; the task is flagged. Since 17 Nov 2026 (DESIGN section 26) a PROMPT from
-  the Manager, or from full-time staff for themselves or their reports, starts the task at once;
+  the Manager, or from full-time staff for themselves or their reports, sends the Doer the files at
+  once and asks YES (In Progress) or NO (section 27);
   anything the reading is unsure about still waits for the manager's approval.
+  Since 17 Nov 2026 (section 29) the Manager may change Master, Staff and Config cells by prompt:
+  the AI only reads his words; code checks rows, columns and names, and nothing is written
+  before his YES.
 - Keep `extract/rules.py`, `extract/clean.py` and `route.py` pure (no network, no Google clients) so
   they are fully unit-testable.
 - All Google APIs sit behind small classes (`SheetStore`, `DriveStore`, `GmailClient`, `ChatClient`,

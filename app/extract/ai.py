@@ -70,7 +70,11 @@ class AIProvider(Protocol):
         ...
 
     def read_reply(self, prompt: str) -> Any:
-        """A typed reply read with `prompts/reply_v1.md` (section 22): a ReplyReading."""
+        """A typed reply read with `prompts/reply_v2.md` (section 22): a ReplyReading."""
+        ...
+
+    def read_edit(self, prompt: str) -> Any:
+        """A Manager's sheet edit read with `prompts/edit_v1.md` (section 29): an EditReading."""
         ...
 
 
@@ -170,6 +174,9 @@ class NullProvider:
         return None
 
     def read_reply(self, prompt: str) -> Any:
+        return None
+
+    def read_edit(self, prompt: str) -> Any:
         return None
 
 
@@ -308,6 +315,25 @@ class GeminiProvider:
         if not text:
             return None
         return ReplyReading.model_validate_json(text)
+
+    def read_edit(self, prompt: str) -> Any:
+        """A Manager's sheet edit (section 29): the masked message, the sheet's column and row
+        names and today's date go in; strict JSON comes back."""
+        from app.sheet_edit import EDIT_SCHEMA, EditReading
+
+        interaction = self._get_client().interactions.create(
+            model=self.model,
+            input=prompt,
+            response_format={
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": EDIT_SCHEMA,
+            },
+            generation_config={"temperature": 0},
+            store=False,
+        )
+        text = getattr(interaction, "output_text", None)
+        return EditReading.model_validate_json(text) if text else None
 
 
 # --- Reading the sender's PROMPT line (DESIGN section 21) --------------------------------------

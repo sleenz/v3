@@ -102,7 +102,7 @@ runs the job at once; it still only sends what is due at that time.
 
 ## WhatsApp buttons and updates (DESIGN section 22, part B)
 
-Needs WhatsApp live, the four templates approved, `installServiceTabs()` run again, and your
+Needs WhatsApp live, the five templates approved, `installServiceTabs()` run again, and your
 Staff row with `WhatsApp` and `WhatsApp opt-in`. Use a test task where you are the Doer.
 
 | # | Do this | Expected |
@@ -139,12 +139,35 @@ another staff member (S). All by email; S1-S2 also work on WhatsApp.
 
 | # | Do this | Expected |
 |---|---------|----------|
-| S1 | From M, email a request with `PROMPT: assign this to <S>` and a PDF. | The reply says "Assigned to <S>; started". The row is Not Started. Within 2 minutes (working hours) S gets the assignment email with the PDF. |
+| S1 | From M, email a request with `PROMPT: assign this to <S>` and a PDF. | The reply says S "is asked YES or NO". The row is Proposed, Acceptance Pending. Within 2 minutes (working hours) S gets the assignment email with the PDF and the original, ending "Reply YES to start". Acceptance becomes Asked. |
+| S1b | S replies `Yes` in that thread. | Status In Progress, Acceptance Accepted. No second email. |
+| S1c | Repeat S1 with another request; S replies "No, cuti". | Stays Proposed, flagged "Declined by <S>: cuti"; M gets an email with the reason and the `assign` hint. |
 | S2 | From M: `PROMPT: assign this to <S> or <F>`. | Row Proposed, flagged; nobody is emailed until M approves in the sheet. |
 | S3 | From F: `PROMPT: assign this to <I>`. | Not Started; I gets the email, F is cc. |
 | S4 | From F: `PROMPT: assign this to <S>`. | Proposed, flagged "PROMPT: waiting for the manager (<S> does not report to <F>)". |
 | S5 | From I: `PROMPT: assign this to <S>`. | Proposed, flagged "PROMPT ignored: only a Manager or full-time staff can assign work". |
 | S6 | From I: `assign G-… to <S>` on a task I does. | "only a Manager or full-time staff can assign work". Nothing changes. |
+
+## Review loop and submissions (DESIGN section 28)
+
+| # | Do this | Expected |
+|---|---------|----------|
+| R1 | On a task In Review, the reviewer replies `approve G-…`. | The Doer's email says "When you have submitted it, reply: submitted G-… <how and when>". The next morning message lists it under "Approved: submit it". |
+| R2 | The Doer replies `submitted G-… hardcopy to OJK today 15:30`, then `YES`. | Status Done, Submission method Hardcopy, Submitted at today 15:30, a Notes line; the manager gets "G-… submitted" with how and when. |
+| R3 | On another task, the reviewer replies `return G-… fix the totals`. | The Doer gets the notes; each morning the task is listed under "Returned with feedback" until `review G-…` is sent again. |
+| R4 | On WhatsApp, tap **Sudah dikirim** on an approved task and type "via email jam 2". | Done, Email, today 14:00. |
+
+## Manager edits by prompt (DESIGN section 29)
+
+From the Manager's mailbox (E1-E3) and WhatsApp (E4). E2-E4 need `AI provider` = Gemini.
+
+| # | Do this | Expected |
+|---|---------|----------|
+| E1 | Email the bot `edit G-x Priority = High`, then reply `YES`. | First "Reply YES to confirm: G-x · Priority: … → High"; after YES, Priority High and an AuditLog row "Prompt edit (Master)". |
+| E2 | Email "ubah deadline G-x jadi 5 Des dan Staff A lapor ke Staff K", then `YES`. | Both changes listed before → after, then written. |
+| E3 | Email "reminder pagi jam 9:30 aja", then `YES`. | Config `Reminder time morning` = 09:30. |
+| E4 | On WhatsApp: "G-x di-hold dulu", tap **Ya**. | Status On Hold. |
+| E5 | From a staff (non-manager) mailbox: `edit G-x Priority = Low`. | Not an edit; nothing changes. |
 
 ## Updates by any email and status (DESIGN section 24)
 

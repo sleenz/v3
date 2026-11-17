@@ -204,7 +204,7 @@ def test_the_ai_sees_masked_text_only(caplog):
                    ai, True, False, MONDAY)  # fmt: skip
     assert "9123 4567" not in ai.reply_calls[0] and "[phone]" in ai.reply_calls[0]
     records = [r for r in caplog.records if r.getMessage() == "ai_reply_call"]
-    assert records and records[0].prompt_version == "reply_v1"
+    assert records and records[0].prompt_version == "reply_v2"
     assert records[0].confidence == 0.9 and records[0].fallback is False
     formatted = "".join(JsonFormatter().format(r) for r in caplog.records)
     assert "call me" not in formatted and "9123" not in formatted

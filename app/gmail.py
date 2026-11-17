@@ -566,6 +566,7 @@ def _propose_by_email(
     person: Any,
     command: Any,
     intake: bool = False,
+    extra: str = "",
 ) -> None:
     """A typed change waits for YES (DESIGN section 22, decision 2): nothing is written now.
     `intake`: the message was a new email, not a reply (section 24); NO then logs it."""
@@ -574,7 +575,8 @@ def _propose_by_email(
     files = _real_files(message)
     task = next((t for t in store.tasks() if t.id == command.task_id), None)
     pending = replies.Pending(command.name, command.task_id, command.value, message.id,
-                              email_id=message.id if files else "", intake=intake)  # fmt: skip
+                              email_id=message.id if files else "", intake=intake,
+                              thread_id=message.thread_id)  # fmt: skip
     summary = replies.describe(command, task, [f.filename for f in files])
     if replies.propose(store, person.name, "Email", pending, clock.now()):
         cancel = (
@@ -582,12 +584,52 @@ def _propose_by_email(
             if intake
             else "Reply NO to cancel."
         )
+        summary = summary.replace("\n", "\n  ")
+        note = f"{extra}\n\n" if extra else ""
         text = (f"Reply YES to confirm (nothing has changed yet):\n  {summary}\n\n"
-                f"{cancel} This waits 30 minutes.")  # fmt: skip
+                f"{note}{cancel} This waits 30 minutes.")  # fmt: skip
     else:
         text = "I can't hold this for your confirmation (the sheet has no _conversations tab "
         text += "yet). Nothing changed; ask the manager to run installServiceTabs()."
     _thread_reply(gmail, store, message, text, person.name, command.task_id or "", "confirm")
+
+
+def _acceptance_reply(
+    gmail: GmailClient, services: Services, message: GmailMessage, sheet_url: str
+) -> bool:
+    """YES / NO in the thread of a "please accept" email (DESIGN section 23). False: not such a
+    reply, or not a yes/no (then it is handled as any other reply)."""
+    from app import acceptance
+    from app.commands import Command
+    from app.lifecycle import CommandContext, run_command
+
+    store = services.store
+    task_id = acceptance.thread_task(store, message.thread_id)
+    person = _staff_sender(store, message) if task_id else None
+    if person is None:
+        return False
+    task = next((t for t in store.tasks() if t.id == task_id), None)
+    if task is None or not acceptance.pending(task):
+        return False
+    answer = acceptance.answer_in(strip_noise(message.body_text) or message.body_text)
+    if answer is None and person.name.casefold() == task.doer.strip().casefold():
+        hint = (f"I couldn't tell if that is a yes or a no. Reply YES to accept {task_id}, or "
+                "NO and the reason if you cannot take it.")  # fmt: skip
+        _thread_reply(gmail, store, message, hint, person.name, task_id or "", "reply")
+        _modify(gmail, message.id, [REPLY_LABEL], [UNREAD, INBOX])
+        return True
+    if answer is None:
+        return False
+    name, reason = answer
+    result = run_command(
+        Command(name, task_id, reason),  # type: ignore[arg-type]
+        CommandContext(store=store, gmail=gmail, actor=person, channel="Email",
+                       sheet_url=sheet_url, context_task_id=task_id, message_id=message.id),
+    )  # fmt: skip
+    _thread_reply(gmail, store, message, result.reply, person.name, task_id or "", "command")
+    _modify(gmail, message.id, [COMMAND_LABEL], [UNREAD, INBOX])
+    logger.info("acceptance_answer", extra={"task_id": task_id, "kind": name})
+    return True
 
 
 def _email_confirmation(
@@ -607,6 +649,8 @@ def _email_confirmation(
     if convo is None:
         return _late_answer(gmail, services, message, person, first)
     pending = replies.Pending.load(convo.value)
+    if pending.thread_id and message.thread_id != pending.thread_id:
+        return False  # an answer counts only in the thread that asked (a forged sender: QA6-C1)
     if not (replies.is_no(first) or replies.is_yes(first)):
         replies.drop_confirm(store, person.name)  # anything else drops the question
         return False
@@ -682,6 +726,8 @@ ASK_BY_EMAIL = {
     "blocked_reason": "What is blocking {task}? Reply: blocked {task} <reason>",
     "extension_date": "Which new date for {task}? Reply: extend {task} 20 Nov",
     "done_proof": "Attach the proof and reply: done {task}",
+    "submit_how": "How and when was {task} submitted? Reply: submitted {task} hardcopy to OJK "
+    "today 15:30 (or by email, WhatsApp, portal)",
 }
 
 
@@ -786,6 +832,54 @@ def _understood_email(
 
 
 _FORWARD_SUBJECT = re.compile(r"^\s*(?:fwd?|fw|tr|wg)\s*:", re.IGNORECASE)
+
+
+def _manager_edit(
+    gmail: GmailClient, services: Services, message: GmailMessage, logged: list[str]
+) -> bool:
+    """A Manager's email asking to change cells in Master, Staff or Config (DESIGN section 29):
+    the fixed form `edit G-0012 Priority = High`, else the AI's reading. The changes are shown
+    before → after and applied on YES. False: not an edit (it is handled as before)."""
+    from app import sheet_edit
+    from app.commands import Command
+    from app.extract.clean import mask_text
+
+    store = services.store
+    person = _staff_sender(store, message)
+    if person is None or person.role != "Manager" or not _may_be_update(message):
+        return False
+    text = strip_noise(message.body_text) or message.body_text
+    from app.commands import parse_command
+
+    if parse_command(text, has_context=True) is not None:
+        return False  # a command, not an edit; never sent to the edit reader (QA6-C9)
+    today = clock.today()
+    changes = sheet_edit.by_rules(text)
+    config = store.config()
+    by_ai = False
+    if changes is None and config.ai_provider != "Off":
+        masked = mask_text(text, mask_emails=config.mask_emails_for_ai)
+        reading = sheet_edit.by_ai(services.ai, masked, store, today)
+        if reading is not None and reading.is_edit:
+            changes, by_ai = reading.changes, True
+    if not changes:
+        return False
+    good, problems = sheet_edit.check(changes, store, today, person.name)
+    new_email = not logged and not outbox.by_thread(store, message.thread_id)
+    if not good and by_ai and new_email:
+        return False  # read by the AI, nothing valid: handled as a request (D15, QA6-C10)
+    if not good:
+        why = "I could not change that: " + "; ".join(problems) + "."
+        _thread_reply(gmail, store, message, why, person.name, "", "reply")
+        _modify(gmail, message.id, [REPLY_LABEL], [UNREAD] if new_email else [UNREAD, INBOX])
+        return True
+    extra = ("Not changed: " + "; ".join(problems)) if problems else ""
+    _propose_by_email(gmail, store, message, person,
+                      Command("sheet_edit", None, sheet_edit.dump(good)),  # type: ignore[arg-type]
+                      intake=new_email and by_ai, extra=extra)  # fmt: skip
+    _modify(gmail, message.id, [COMMAND_LABEL], [UNREAD] if new_email else [UNREAD, INBOX])
+    logger.info("prompt_edit_proposed", extra={"n_changes": len(good)})
+    return True
 
 
 def _may_be_update(message: GmailMessage) -> bool:
@@ -908,11 +1002,18 @@ def _email_command(
     command = parse_command(text, has_context=context is not None)
     if command is None:
         return False
+    from app import replies
     from app.commands import Command
     from app.lifecycle import CHANGES
 
-    if command.name in CHANGES:
-        # a typed change waits for YES (section 22, decision 2).
+    if command.name == "submitted" and not replies.readable_submission(command.value):
+        task_id = command.task_id or context or "G-0012"  # no method or time: ask (QA6-B5)
+        _thread_reply(gmail, store, message, ASK_BY_EMAIL["submit_how"].format(task=task_id),
+                      person.name, task_id, "reply")  # fmt: skip
+        _modify(gmail, message.id, [REPLY_LABEL], [UNREAD, INBOX])
+        return True
+    if command.name in CHANGES and command.name not in ("accept", "decline"):
+        # a typed change waits for YES (section 22, decision 2); accept/decline is the answer.
         # From a new email, NO logs it as a request and it stays in the inbox until answered.
         task_id = command.task_id or context
         _propose_by_email(gmail, store, message, person,
@@ -1018,8 +1119,14 @@ def process_inbox(
                 continue
             logged = [i for i in gmail.logged_message_ids(message.thread_id) if i != message.id]
             fresh = services.store.task_by_source_id(message.id) is None
+            if fresh and _acceptance_reply(gmail, services, message, sheet_url):
+                run.commands += 1  # YES / NO to "please accept" (section 23)
+                continue
             if fresh and _email_confirmation(gmail, services, message, sheet_url):
                 run.commands += 1  # YES / NO to a proposed change (section 22)
+                continue
+            if fresh and _manager_edit(gmail, services, message, logged):
+                run.commands += 1  # the Manager changes the sheet by prompt (section 29)
                 continue
             if fresh and not logged and _outbox_reply(gmail, services, message, sheet_url):
                 run.replies += 1  # a reply to a reminder or notice: AI first (section 22)
