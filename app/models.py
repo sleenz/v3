@@ -317,6 +317,9 @@ class Task(_SheetRow):
     review_notes: str = Field(default="", alias="Review notes")
     reminder_profile: str = Field(default="", alias="Reminder profile")
     review_file: str = Field(default="", alias="Review file")
+    # Section 27: a PROMPT assignment waits for the Doer's YES. Pending (to email) / Asked /
+    # Accepted / Declined; blank = no answer needed.
+    acceptance: str = Field(default="", alias="Acceptance")
 
     _dates = field_validator("start", "due_date", "submitted_date", "last_updated", mode="before")(
         _blank_to_none
@@ -329,6 +332,11 @@ class Task(_SheetRow):
     @property
     def review_needed(self) -> bool:
         return self.needs_review.strip().lower() in {"yes", "y", "ya", "true"}
+
+    @property
+    def awaiting_acceptance(self) -> bool:
+        """A PROMPT assignment the Doer has not answered yet (section 27)."""
+        return self.status == "Proposed" and self.acceptance.strip().lower() in {"pending", "asked"}
 
     @property
     def supporters(self) -> list[str]:
@@ -354,6 +362,7 @@ class Task(_SheetRow):
 # that needs one says which column to add.
 REVIEW_COLUMNS: tuple[str, ...] = (
     "Needs review", "Reviewer", "Review notes", "Reminder profile", "Review file",
+    "Acceptance",  # section 27
 )  # fmt: skip
 MASTER_REQUIRED_COLUMNS: tuple[str, ...] = (
     *(f.alias for f in Task.model_fields.values() if f.alias and f.alias not in REVIEW_COLUMNS),
@@ -383,7 +392,7 @@ class TaskResult(BaseModel):
     flags: list[str] = Field(default_factory=list)
     files_url: str = ""
     due_from_prompt: bool = False  # the sender's PROMPT set the deadline (section 21)
-    next_step: str = ""  # "Waiting for manager approval." or "Assigned to X; started." (s. 26)
+    next_step: str = ""  # "Waiting for manager approval." / "...waiting for X's YES" (s. 27)
 
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
@@ -555,7 +564,7 @@ class ProgressRow(_SheetRow):
 
 
 ConversationStep = Literal["blocked_reason", "extension_date", "done_proof", "review_file",
-                           "return_notes", "confirm"]  # fmt: skip
+                           "return_notes", "confirm", "decline_reason"]  # fmt: skip
 
 
 class Conversation(_SheetRow):

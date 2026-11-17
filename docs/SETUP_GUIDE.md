@@ -468,7 +468,7 @@ them.
 
 **Optional, later**: the Google Chat bot (README section 9) and the WhatsApp bot (README section
 9b). Both run on the same deployment; they only need their own settings and secrets. For
-WhatsApp also submit the four templates in `whatsapp_templates/` in WhatsApp Manager.
+WhatsApp also submit the five templates in `whatsapp_templates/` in WhatsApp Manager.
 
 ---
 

@@ -1032,3 +1032,26 @@ for PROMPTs from people who may assign.
 - **No PROMPT** (rules-only routing): unchanged, the task waits for the Manager's approval.
 - A late WhatsApp PROMPT (section 21.6) follows the same rules; from someone who may not assign
   it is added to Notes only.
+
+## 27. YES / NO with the files (approved 17 Nov 2026)
+
+Brings back the Doer's answer of section 23, but after they have the files. Section 26 still
+decides who may assign and when a PROMPT waits for the Manager.
+
+- **Logging.** A PROMPT assignment that may start (section 26) is written `Proposed` with Master
+  `Acceptance` = `Pending`. Naming yourself needs no answer (`Not Started`, `Accepted`). Without
+  the `Acceptance` column the task simply starts (`Not Started`), as in section 26.
+- **The email.** The change job (working hours) sends the Doer the usual assignment email:
+  original message, files attached, cc Owner and Support. It starts with "Reply YES to start
+  this task (Status becomes In Progress). Reply NO and the reason if you cannot take it" and
+  its subject ends "– reply YES or NO". Acceptance becomes `Asked`; the email is recorded in
+  `_outbox` as kind `accept_ask`. On WhatsApp the Doer also gets [Terima] [Tolak] (template
+  `grc_tugas_baru` outside the 24-hour window).
+- **YES** (a YES in the thread, Terima, a typed "ya" in reply on WhatsApp, `accept G-…`):
+  Status `In Progress`, Acceptance `Accepted`. Nothing else is sent.
+- **NO + reason** (also Tolak, then the reason; `decline G-… <reason>`): stays `Proposed`,
+  Acceptance `Declined`, flagged `Declined by <name>: <reason>`; every Manager is told with the
+  hint `assign G-… to <name>`, which sets `Pending` again, so the new person gets the email.
+- Only the Doer answers. An unclear reply in the thread gets a hint. The morning message lists
+  unanswered assignments first; the manager summary has "Waiting for acceptance".
+

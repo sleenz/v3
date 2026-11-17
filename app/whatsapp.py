@@ -690,7 +690,10 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
         prompt = parse_prompt(text)
         if prompt is not None:
             return _handle_prompt(message, prompt, ctx, now)
-        answered = _deadline_answer(message, text, ctx, now)
+        # section 27 before the deadline YES: "ya" replying to the assignment accepts (QA-A5)
+        answered = _acceptance_answer(message, person, ctx) if message.context_id else None
+        if answered is None:
+            answered = _deadline_answer(message, text, ctx, now)
         if answered is not None:
             return answered
     if message.kind == "other":
@@ -706,6 +709,22 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
 # --- Typed replies (DESIGN section 22, part C) ---------------------------------------------------
 
 CONFIRM_BUTTONS = [("cf:yes", "Ya"), ("cf:edit", "Ubah"), ("cf:no", "Batal")]
+
+
+def _acceptance_answer(message: WAMessage, person: StaffMember, ctx: WaContext) -> str | None:
+    """Section 27: "ya" / "tidak bisa, cuti" typed in reply to the Doer's assignment message."""
+    from app import acceptance
+
+    if message.media:
+        return None
+    linked = _context_task(ctx, message, implicit=False)
+    task = next((t for t in ctx.store.tasks() if t.id == linked), None) if linked else None
+    if task is None or not acceptance.pending(task):
+        return None
+    answer = acceptance.answer_in(message.text.strip())
+    if answer is None or task.doer.strip().casefold() != person.name.casefold():
+        return None
+    return _run_now(message, person, ctx, Command(answer[0], task.id, answer[1]))
 
 
 def _handle_reply(

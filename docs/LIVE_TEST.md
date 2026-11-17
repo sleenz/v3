@@ -102,7 +102,7 @@ runs the job at once; it still only sends what is due at that time.
 
 ## WhatsApp buttons and updates (DESIGN section 22, part B)
 
-Needs WhatsApp live, the four templates approved, `installServiceTabs()` run again, and your
+Needs WhatsApp live, the five templates approved, `installServiceTabs()` run again, and your
 Staff row with `WhatsApp` and `WhatsApp opt-in`. Use a test task where you are the Doer.
 
 | # | Do this | Expected |
@@ -139,7 +139,9 @@ another staff member (S). All by email; S1-S2 also work on WhatsApp.
 
 | # | Do this | Expected |
 |---|---------|----------|
-| S1 | From M, email a request with `PROMPT: assign this to <S>` and a PDF. | The reply says "Assigned to <S>; started". The row is Not Started. Within 2 minutes (working hours) S gets the assignment email with the PDF. |
+| S1 | From M, email a request with `PROMPT: assign this to <S>` and a PDF. | The reply says S "is asked YES or NO". The row is Proposed, Acceptance Pending. Within 2 minutes (working hours) S gets the assignment email with the PDF and the original, ending "Reply YES to start". Acceptance becomes Asked. |
+| S1b | S replies `Yes` in that thread. | Status In Progress, Acceptance Accepted. No second email. |
+| S1c | Repeat S1 with another request; S replies "No, cuti". | Stays Proposed, flagged "Declined by <S>: cuti"; M gets an email with the reason and the `assign` hint. |
 | S2 | From M: `PROMPT: assign this to <S> or <F>`. | Row Proposed, flagged; nobody is emailed until M approves in the sheet. |
 | S3 | From F: `PROMPT: assign this to <I>`. | Not Started; I gets the email, F is cc. |
 | S4 | From F: `PROMPT: assign this to <S>`. | Proposed, flagged "PROMPT: waiting for the manager (<S> does not report to <F>)". |

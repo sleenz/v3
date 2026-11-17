@@ -92,8 +92,9 @@ Follow `SETUP_GUIDE.md` in order, in **Cloud Shell** of the company project:
 3. **Test together**: guide **step 10**:
    - a new email to the bot is logged in Master and answered;
    - from the Manager's mailbox, a request whose first line is `PROMPT: assign this to <name>`
-     with a PDF: the reply says "Assigned to <name>; started", and within 2 minutes that person
-     gets the assignment email with the PDF (DESIGN section 26);
+     with a PDF: within 2 minutes that person gets the assignment email with the PDF, ending
+     "Reply YES to start"; their YES sets the row In Progress (DESIGN section 27; needs the
+     Master column `Acceptance`);
    - a request without a PROMPT stays Proposed; approving it in the sheet (Status Not Started)
      emails its Doer within 2 minutes, with the files attached;
    - a reminder can be forced with `gcloud scheduler jobs run grc-reminders --location=asia-southeast2`.
