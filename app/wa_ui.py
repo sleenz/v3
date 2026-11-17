@@ -402,7 +402,11 @@ def handle_answer(
     if step == "decline_reason" and text:
         return _finish(ctx, person, message, Command("decline", task_id, text))
     if step == "submit_how" and text:  # section 28: a file with it is the proof
-        return _finish(ctx, person, message, Command("submitted", task_id, text), files)
+        from app import submission
+
+        if submission.read(text, clock.now()) is not None:
+            return _finish(ctx, person, message, Command("submitted", task_id, text), files)
+        # no method or no usable time: ask again, keeping the question open (QA6-B9)
     if step == "done_proof" and files:
         return _finish(ctx, person, message, Command("done", task_id), files)
     if step == "review_file" and (files or text.lower() in NO_FILE_WORDS):
@@ -442,8 +446,9 @@ def _notice(event: str, task: Task, note: str, staff: list[StaffMember]
         out.append(
             (
                 doer,
-                f"{task.id} disetujui reviewer. Kirim bukti untuk menyelesaikan.",
-                [(tap_id("done", task.id), "Selesai")],
+                f"{task.id} disetujui reviewer. Kirim ke peminta, lalu ketuk Sudah dikirim (atau "
+                f"balas: submitted {task.id} <cara dan waktu>).",
+                [(tap_id("sub", task.id), "Sudah dikirim")],  # section 28 (QA6-B11)
             )
         )
     elif event == "returned" and doer is not None:
@@ -482,12 +487,13 @@ def _notice(event: str, task: Task, note: str, staff: list[StaffMember]
                 )
             )
     elif event == "submitted":
-        method, when, _ = [*note.split("|", 2), "", "", ""][:3]
+        method, when, details = [*note.split("|", 2), "", "", ""][:3]
         people = {p.name.casefold(): p for p in [*managers(staff), owner] if p is not None}
         people.pop(task.doer.strip().casefold(), None)
-        for person in people.values():
+        for person in people.values():  # how, when, the details and the due date (QA6-B12)
             out.append((person, f"{task.doer or 'Doer'} sudah mengirim {task.id} – {task.title}: "
-                                f"{method or '-'}, {when or '-'}.", []))  # fmt: skip
+                                f"{method or '-'}, {when or '-'}. Detail: {details or '-'}. "
+                                f"Due: {due}.", []))  # fmt: skip
     elif event == "declined":
         for manager in managers(staff):
             out.append(

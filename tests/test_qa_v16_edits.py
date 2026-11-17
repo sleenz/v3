@@ -249,7 +249,7 @@ def test_dates_in_common_formats(typed):
     assert problems == [] and good[0].value == "2026-12-05"
 
 
-@pytest.mark.parametrize("typed", ["Dec 5", "tomorrow", "next friday", "05.12.2026"])
+@pytest.mark.parametrize("typed", ["Dec 5", "next friday", "05.12.2026"])
 def test_dates_the_rules_cannot_read_are_refused_not_guessed(typed):
     services, _, task = setup()
     good, problems = check([Change(tab="Master", key=task.id, column="Due date", value=typed)],
@@ -257,10 +257,7 @@ def test_dates_the_rules_cannot_read_are_refused_not_guessed(typed):
     assert good == [] and "is not a date" in problems[0]
 
 
-@pytest.mark.xfail(
-    strict=True, reason="QA6-C2: Due date '2026/12/05' is silently read as 2026-05-12 (DD/MM "
-    "regex matches the '12/05' inside the year-first date)"
-)  # fmt: skip
+  # fmt: skip
 def test_year_first_slash_date_is_not_misread():
     services, _, task = setup()
     good, problems = check(

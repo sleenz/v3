@@ -214,20 +214,10 @@ def test_jam_3_in_the_morning_clock_is_still_the_afternoon_and_so_refused():
     assert naive(read("email jam 3 pagi", at(MONDAY, 9)).at) == datetime(2026, 10, 26, 3, 0)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-B1: 'langsung' (Indonesian for 'directly') is a Hardcopy word and Hardcopy is "
-    "checked first, so 'langsung via email' is recorded as Hardcopy",
-)
 def test_langsung_via_email_is_email():
     assert method_in("sudah langsung dikirim via email ke OJK") == "Email"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-B2: a day-and-month without a year always takes the current year, so '30 Des' "
-    "typed on 5 Jan is read as next December (future) and the submission is refused",
-)
 def test_a_date_without_year_in_january_means_last_december():
     jan = at(date(2027, 1, 5), 11)
     sent = read("hardcopy ke OJK 30 Des 15:00", jan)
@@ -236,21 +226,11 @@ def test_a_date_without_year_in_january_means_last_december():
     assert sent is not None and sent.at.date() == date(2026, 12, 30)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-B3: 'besok' / 'tomorrow' (a future day) is ignored and the submission is "
-    "recorded as now, although section 28 refuses a future time",
-)
 def test_tomorrow_is_a_future_day_and_refused():
     assert read("via email besok", NOW) is None
     assert read("will send by courier tomorrow", NOW) is None
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-B4: an impossible date (31/02, 10/26 US-style) is dropped silently and the "
-    "submission recorded as today/now instead of asking how and when",
-)
 def test_an_impossible_date_is_not_turned_into_now():
     assert read("email 31/02", NOW) is None
 
@@ -461,11 +441,6 @@ def test_redelivered_yes_does_not_submit_twice():
     assert len(sent_to(gmail, "staff.k@example.com")) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-B5: a typed 'submitted G-x' with no method is shown as a change and asks for "
-    "YES (then refuses); section 28 says the bot asks 'How and when was it submitted?' at once",
-)
 def test_typed_submission_without_method_asks_how_instead_of_yes():
     services = make()
     gmail = FakeGmailClient()
@@ -478,12 +453,6 @@ def test_typed_submission_without_method_asks_how_instead_of_yes():
     assert "How and when" in ask and "Reply YES" not in ask
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-B6: the moment is read again at YES time, so a submission with no time typed "
-    "is written with the YES time, not the time shown in the confirmation (section 24 "
-    "before -> after); 'kemarin' / 'hari ini' shift a day if YES comes after midnight",
-)
 def test_yes_writes_the_moment_that_was_shown():
     services = make()
     gmail = FakeGmailClient()
@@ -624,11 +593,6 @@ def test_cap_defers_the_approved_reminder_to_the_next_morning():
     assert text.count(task_id) == 1 and "Approved: submit it" in text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-B7: a deferred 'Returned with feedback' reminder is still sent after the task "
-    "went back In Review (deferred rows are only dropped for Done/Proposed, never relabelled)",
-)
 def test_deferred_returned_reminder_dropped_once_back_in_review():
     services = make(**{"Max reminders per day": 1})
     gmail = FakeGmailClient()
@@ -641,11 +605,6 @@ def test_deferred_returned_reminder_dropped_once_back_in_review():
     assert "Returned with feedback" not in text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-B8: a deferred 'Approved: submit it' reminder is still sent after the task was "
-    "Cancelled (deferred rows are dropped only for Done/Proposed)",
-)
 def test_deferred_approved_reminder_dropped_once_cancelled():
     services = make(**{"Max reminders per day": 1})
     gmail = FakeGmailClient()
@@ -767,11 +726,6 @@ def test_wa_tap_on_task_needing_review_refuses():
     assert get(services, task_id).status == "In Progress"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-B9: after 'Sudah dikirim' an answer without a method ends the question; the "
-    "bot re-asks 'How and when' but the next answer is no longer taken as the answer",
-)
 def test_wa_second_answer_after_the_bot_asks_again_is_used():
     services = make(wa=True)
     ctx = wa_ctx(services)
@@ -784,11 +738,6 @@ def test_wa_second_answer_after_the_bot_asks_again_is_used():
     assert get(services, task_id).status == "Done"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-B10: the same WhatsApp answer delivered twice (same wamid) is applied once, "
-    "then the re-delivery is taken as a new request draft (no dedupe for question answers)",
-)
 def test_wa_redelivered_answer_is_ignored():
     services = make(wa=True)
     ctx = wa_ctx(services)
@@ -816,12 +765,6 @@ def test_supporter_via_lainnya_is_refused():
     assert get(services, task_id).status == "Approved"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-B11: the WhatsApp approval notice says 'Kirim bukti untuk menyelesaikan' with a "
-    "[Selesai] (proof) button; section 28 says it tells the Doer to submit and reply "
-    "'submitted G-x <how>' (Sudah dikirim)",
-)
 def test_wa_approval_notice_tells_the_doer_to_submit():
     services = make(wa=True)
     ctx = wa_ctx(services)
@@ -835,11 +778,6 @@ def test_wa_approval_notice_tells_the_doer_to_submit():
     assert [label for _, label in buttons] == ["Sudah dikirim"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-B12: the WhatsApp 'submitted' notice to Managers/Owner carries how and when but "
-    "not the details or the due date (section 28: how, when, the details and the due date)",
-)
 def test_wa_submitted_notice_has_details_and_due_date():
     services = make(wa=True)
     ctx = wa_ctx(services)

@@ -993,9 +993,16 @@ def _email_command(
     command = parse_command(text, has_context=context is not None)
     if command is None:
         return False
+    from app import replies
     from app.commands import Command
     from app.lifecycle import CHANGES
 
+    if command.name == "submitted" and not replies.readable_submission(command.value):
+        task_id = command.task_id or context or "G-0012"  # no method or time: ask (QA6-B5)
+        _thread_reply(gmail, store, message, ASK_BY_EMAIL["submit_how"].format(task=task_id),
+                      person.name, task_id, "reply")  # fmt: skip
+        _modify(gmail, message.id, [REPLY_LABEL], [UNREAD, INBOX])
+        return True
     if command.name in CHANGES and command.name not in ("accept", "decline"):
         # a typed change waits for YES (section 22, decision 2); accept/decline is the answer.
         # From a new email, NO logs it as a request and it stays in the inbox until answered.

@@ -657,6 +657,10 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
     from app import wa_ui  # section 22: buttons, lists and short questions
 
     wa_ui.touch_window(store, person.name, now)
+    if message.kind in ("text", "media") and progress.already_processed(store, message.id):
+        # the same answer delivered again (QA6-B10); taps have their own "Already done."
+        logger.info("wa_duplicate", extra={"kind": message.kind})
+        return "duplicate"
     if message.kind == "tap":
         if ctx.gmail is None:
             _reply(ctx, message.sender, "Tombol belum bisa dipakai. Coba lagi nanti.")

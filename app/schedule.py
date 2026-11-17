@@ -131,6 +131,23 @@ class _Sender:
         return "Email"
 
 
+def _still_due(rule: str, task: Task | None) -> bool:
+    """A deferred trigger still applies: the task is open and in the status the rule is about
+    (an "Approved: submit it" for a task since cancelled, or "Returned" for one back In
+    Review, is dropped: QA6-B7/B8)."""
+    from app.models import OPEN_STATUSES
+    from app.reminders import ACCEPT_WAITING, APPROVED_SUBMIT, RETURNED_REVISE, REVIEW_WAITING
+
+    if task is None:
+        return False
+    if rule == ACCEPT_WAITING:
+        return task.awaiting_acceptance
+    needs = {APPROVED_SUBMIT: "Approved", RETURNED_REVISE: "Returned", REVIEW_WAITING: "In Review"}
+    if rule in needs:
+        return task.status == needs[rule]
+    return task.status in OPEN_STATUSES
+
+
 def _current_rule(trigger: Trigger, task: Task | None, today: date) -> Trigger:
     """A deferred trigger: say how things stand now ("due in 3 days" yesterday is "due in 2
     days"; yesterday's "due today" is overdue)."""
@@ -312,7 +329,7 @@ def _personal_slots(
     keep_deferred: list[ReminderSent] = []
     for row in deferred:
         task = tasks.get(row.task_id)
-        if task is None or task.status in ("Done", "Proposed"):
+        if not _still_due(row.rule, task):
             rows.remove(row)  # nothing left to remind about
             continue
         trigger = _current_rule(Trigger(row.rule, row.task_id, row.person), task, today)

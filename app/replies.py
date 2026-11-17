@@ -121,7 +121,7 @@ def _from_reading(
     elif intent == "review":
         command = Command("review", task_id)
     elif intent == "submitted":  # section 28: how and when, as typed
-        if not note:
+        if not readable_submission(note):
             return Understanding("ask", task_id=task_id, via=via, step="submit_how")
         command = Command("submitted", task_id, note)
     elif intent == "snooze":
@@ -164,6 +164,12 @@ def understand(
     return understood
 
 
+def readable_submission(text: str) -> bool:
+    from app import clock, submission
+
+    return bool(text.strip()) and submission.read(text, clock.now()) is not None
+
+
 def _by_rules(
     text: str, known: str | None, single: str | None, tasks: dict[str, Task], has_files: bool
 ) -> Understanding:
@@ -190,8 +196,8 @@ def _by_rules(
         return Understanding("ask", task_id=task_id, step="blocked_reason")
     if command.name == "extension" and not command.value.strip():
         return Understanding("ask", task_id=task_id, step="extension_date")
-    if command.name == "submitted" and not command.value.strip():
-        return Understanding("ask", task_id=task_id, step="submit_how")
+    if command.name == "submitted" and not readable_submission(command.value):
+        return Understanding("ask", task_id=task_id, step="submit_how")  # QA6-B5
     if command.name == "done" and not has_files and not tasks.get(task_id, Task()).link.strip():
         return Understanding("ask", task_id=task_id, step="done_proof")
     return Understanding("change", command, task_id)
@@ -300,7 +306,12 @@ def _rows(store: SheetStore) -> list[Conversation]:
 def propose(
     store: SheetStore, person: str, channel: Channel, pending: Pending, now: datetime
 ) -> bool:
-    """Keep the change until Ya/YES (one open question per person). False: no tab to keep it."""
+    """Keep the change until Ya/YES (one open question per person). False: no tab to keep it.
+    A submission keeps the moment it was read as, so YES writes what was shown (QA6-B6)."""
+    if pending.name == "submitted":
+        from app import submission
+
+        pending.value = submission.freeze(pending.value, now)
     rows = [
         r for r in _rows(store) if r.person.casefold() != person.casefold() and r.expires_at > now
     ]
