@@ -354,10 +354,6 @@ def test_no_with_a_reason_stays_proposed_declined_and_the_manager_is_told(body, 
     assert changes(services, gmail).emailed == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-A1: a reason on the next line is lost when the first line is 'No, sorry.'",
-)
 @pytest.mark.parametrize(
     "body",
     ["No, sorry.\nI am on leave next week", "Tidak bisa, maaf\nI am on leave next week"],
@@ -368,7 +364,6 @@ def test_a_reason_on_the_line_after_no_sorry_is_kept(body):
     assert "Declined by Staff P: I am on leave next week" in saved.flags
 
 
-@pytest.mark.xfail(strict=True, reason="QA6-A2: 'No problem' / 'Tidak masalah' read as a decline")
 @pytest.mark.parametrize(
     "body",
     ["No problem, I will do it", "Tidak masalah, siap", "Gak apa-apa, saya kerjakan",
@@ -411,10 +406,6 @@ def test_whatsapp_tolak_then_batal_keeps_it_asked_and_tolak_then_reason_declines
     assert manager_notices(gmail) or told  # the Manager is on WhatsApp here
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-A5: a bare 'No' with an email sign-off takes the sign-off as the reason",
-)
 def test_a_bare_no_with_a_sign_off_does_not_use_the_sign_off_as_the_reason():
     services, gmail = setup()
     saved = decline_by_email(services, gmail, "No\n\nRegards,\nStaff P")
@@ -527,10 +518,6 @@ def test_after_a_decline_the_manager_changing_doer_and_status_in_the_sheet_email
     assert [a.filename for a in email.attachments] == ["Surat.pdf"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-A4: Doer changed in the Sheet while Asked: new Doer never gets the files/question",
-)
 def test_a_doer_changed_in_the_sheet_while_asked_gets_the_files_before_answering():
     services, gmail = setup()
     task, _ = emailed(services, gmail)
@@ -635,10 +622,6 @@ def late_prompt(services, gmail, line: str) -> tuple[WaContext, Task]:
     return ctx, next(t for t in services.store.tasks() if t.source_id == "late-1")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA6-A3: a late WhatsApp PROMPT starts the task (Not Started) instead of Pending",
-)
 def test_a_late_whatsapp_manager_prompt_asks_yes_or_no_like_any_prompt():
     services, gmail = setup(wa=True)
     _, task = late_prompt(services, gmail, "PROMPT: assign this to Staff D")

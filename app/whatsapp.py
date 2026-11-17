@@ -1075,8 +1075,15 @@ def _apply_late_prompt(
         doer = routed.doer or routed.owner or ""
         hold = assignment_hold(person, find_person(doer, store.staff()))
         if hold is None and not prompt_unsure(flags):
-            changes["Status"] = "Not Started"  # the change job emails the files (section 26)
-            audits.append(("Status", task.status, "Not Started"))
+            # sections 26-27: as for any PROMPT; the change job emails the files (QA6-A3)
+            if "Acceptance" in store.master_header() and doer.casefold() != person.name.casefold():
+                changes["Acceptance"] = "Pending"
+                audits.append(("Acceptance", task.acceptance, "Pending"))
+            else:
+                changes["Status"] = "Not Started"
+                if "Acceptance" in store.master_header():
+                    changes["Acceptance"] = "Accepted"
+                audits.append(("Status", task.status, "Not Started"))
     if decision.reviewer:
         changes.update({"Reviewer": decision.reviewer, "Needs review": "Yes"})
         replies.append(f"reviewer is {decision.reviewer}")
@@ -1095,7 +1102,10 @@ def _apply_late_prompt(
     problems = [part for part in replies if part.startswith("I couldn't")]
     reply = f"Updated {task_id}: " + ", ".join(done) + "." if done else ""
     reply = reply or f"Added your PROMPT to {task_id} as a note."
-    if changes.get("Status") == "Not Started":
+    if changes.get("Acceptance") == "Pending":
+        doer = changes.get("Doer") or task.doer
+        tail = f"{doer} gets the assignment email with the files and is asked YES or NO."
+    elif changes.get("Status") == "Not Started":
         doer = changes.get("Doer") or task.doer
         tail = f"Started: {doer} gets the assignment email with the files within a few minutes."
     else:

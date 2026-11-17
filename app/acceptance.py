@@ -106,6 +106,27 @@ _DECLINE = re.compile(
 )
 
 
+_NO_PROBLEM = re.compile(  # "No problem, I'll do it" is a yes, not a no (QA6-A2)
+    r"^(?:no\s+(?:problem|worries|prob)|(?:tidak|nggak|gak|ga)\s+(?:masalah|apa[- ]?apa|papa))\b",
+    re.I,
+)
+_SIGN_OFF = re.compile(  # where an email's body ends (QA6-A5)
+    r"^(?:--\s*|regards|best|kind regards|thanks|thank you|terima kasih|salam|hormat saya|"
+    r"sent from my)\b",
+    re.I,
+)
+_COURTESY = re.compile(r"^(?:thanks|thank you|sorry|maaf)\b\W*", re.I)
+
+
+def _reason_lines(lines: list[str]) -> str:
+    kept = []
+    for line in lines:
+        if _SIGN_OFF.match(line):
+            break
+        kept.append(line)
+    return " ".join(kept[:2]).strip()
+
+
 def answer_in(text: str) -> tuple[str, str] | None:
     """("accept", "") or ("decline", reason) from a reply to "please accept"; None when it is
     neither. "Yes, I will take it", "Siap" accept ("terima kasih" does not); "No, I am on leave"
@@ -119,15 +140,16 @@ def answer_in(text: str) -> tuple[str, str] | None:
         first = _APOLOGY.sub("", first, count=1)
     elif re.fullmatch(r"(?:sorry|maaf)\W*", first, re.I) and len(lines) > 1:
         first, lines = lines[1], lines[1:]
+    if _NO_PROBLEM.match(first) and not re.search(r"\b(?:but|tapi)\b", first, re.I):
+        return ("accept", "")
     if _ACCEPT.match(first) and not _NOT_PLAIN.search(first):
         return ("accept", "")
     found = _DECLINE.match(first)
     if found:
-        reason = first[found.end() :].strip()
+        reason = _COURTESY.sub("", first[found.end() :].strip()).strip()  # "No, sorry." (QA6-A1)
         if not reason:
-            reason = " ".join(lines[1:3]).strip()
-        reason = re.sub(r"^(?:thanks|thank you|sorry|maaf)\b\W*", "", reason, flags=re.I)
-        return ("decline", reason.strip()[:300])
+            reason = _COURTESY.sub("", _reason_lines(lines[1:])).strip()
+        return ("decline", reason[:300])
     return None
 
 

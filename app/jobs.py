@@ -100,8 +100,8 @@ def run_changes(
         # Section 27: a PROMPT assignment (Proposed, Acceptance Pending) gets the assignment
         # email with the files and the YES / NO question, once per Doer.
         asking = acceptance.pending(task) and bool(doer)
-        if asking and acceptance.asked(store, task):
-            continue
+        if asking and acceptance.asked(store, task) and doer == notified_doer:
+            continue  # this Doer has the files and the question (a new Doer gets them: QA6-A4)
         if not asking and (task.status not in OPEN_STATUSES or not doer or doer == notified_doer):
             continue
         person = find_person(doer, staff)
