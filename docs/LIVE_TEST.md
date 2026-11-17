@@ -148,6 +148,15 @@ another staff member (S). All by email; S1-S2 also work on WhatsApp.
 | S5 | From I: `PROMPT: assign this to <S>`. | Proposed, flagged "PROMPT ignored: only a Manager or full-time staff can assign work". |
 | S6 | From I: `assign G-… to <S>` on a task I does. | "only a Manager or full-time staff can assign work". Nothing changes. |
 
+## Review loop and submissions (DESIGN section 28)
+
+| # | Do this | Expected |
+|---|---------|----------|
+| R1 | On a task In Review, the reviewer replies `approve G-…`. | The Doer's email says "When you have submitted it, reply: submitted G-… <how and when>". The next morning message lists it under "Approved: submit it". |
+| R2 | The Doer replies `submitted G-… hardcopy to OJK today 15:30`, then `YES`. | Status Done, Submission method Hardcopy, Submitted at today 15:30, a Notes line; the manager gets "G-… submitted" with how and when. |
+| R3 | On another task, the reviewer replies `return G-… fix the totals`. | The Doer gets the notes; each morning the task is listed under "Returned with feedback" until `review G-…` is sent again. |
+| R4 | On WhatsApp, tap **Sudah dikirim** on an approved task and type "via email jam 2". | Done, Email, today 14:00. |
+
 ## Updates by any email and status (DESIGN section 24)
 
 Use a test task you are the Doer of (call it G-x). U3 and U4 need `AI provider` = Gemini.

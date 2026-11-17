@@ -20,6 +20,7 @@ CommandName = Literal[
     "note",  # part C: information added to Notes
     "accept", "decline",  # section 23: the assignee answers a Manager's assignment
     "status",  # section 24: one task's state, read from the Sheet
+    "submitted",  # section 28: how and when it was submitted to the requester
 ]  # fmt: skip
 
 _TASK_ID = re.compile(r"\bG-?(\d{1,5})\b", re.IGNORECASE)
@@ -50,6 +51,9 @@ _TASK_VERBS: dict[str, CommandName] = {
     "note": "note", "catatan": "note",
     "accept": "accept", "terima": "accept", "terima tugas": "accept",
     "decline": "decline", "tolak tugas": "decline",
+    "submitted": "submitted", "sudah submit": "submitted",
+    "sudah dikirim": "submitted", "dikirim": "submitted", "terkirim": "submitted",
+    "sudah kirim": "submitted",
     "status": "status", "how is": "status", "how's": "status", "gimana": "status",
     "bagaimana": "status", "cek status": "status", "status tugas": "status",
 }  # fmt: skip

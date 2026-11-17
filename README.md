@@ -270,6 +270,15 @@ Replaces the 09:00 digest and the old daily WhatsApp reminder.
         YES to start, or NO and the reason". YES (or **Terima** on WhatsApp) sets In Progress;
         NO + reason goes back to the Manager, who reassigns with `assign G-… to <name>`.
       - Without the `Acceptance` column the task simply starts, with no Yes/No.
+- [ ] Review loop and submissions (DESIGN section 28). Add the Master columns **`Submission
+      method`** and **`Submitted at`** (optional; without them only Notes and Submitted date are
+      written). Tell the team:
+      - After an approval the bot reminds you every morning until you report the submission:
+        `submitted G-0012 hardcopy to OJK today 15:30` (or "sudah dikirim via email", or tap
+        **Sudah dikirim** on WhatsApp). A file as proof is optional. The task becomes Done and the
+        manager is told.
+      - After a return you get the feedback and a reminder every morning until you send
+        `review G-0012` again with the new file.
       - Full-time staff can assign themselves or their own interns the same way; naming anyone
         else waits for the Manager. Interns and additional help cannot assign.
       - A PROMPT the bot is unsure about (Gemini and the rules disagree, an unknown name, "or")

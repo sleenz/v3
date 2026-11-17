@@ -70,7 +70,7 @@ class AIProvider(Protocol):
         ...
 
     def read_reply(self, prompt: str) -> Any:
-        """A typed reply read with `prompts/reply_v1.md` (section 22): a ReplyReading."""
+        """A typed reply read with `prompts/reply_v2.md` (section 22): a ReplyReading."""
         ...
 
 

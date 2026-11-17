@@ -297,7 +297,7 @@ def test_blank_support_changes_nothing_for_the_doer():
     assert email.cc == [] and "Support:" not in email.text
     titles = [t for _, t in card_buttons(task, person(services.store, "Staff P"),
                                          services.store.staff())]  # fmt: skip
-    assert titles == ["Update progres", "Selesai", "Lainnya"]
+    assert titles == ["Update progres", "Sudah dikirim", "Lainnya"]
 
 
 # --- 3. Permissions ------------------------------------------------------------------------------

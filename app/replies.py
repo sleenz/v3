@@ -120,6 +120,10 @@ def _from_reading(
         command = Command("done", task_id)
     elif intent == "review":
         command = Command("review", task_id)
+    elif intent == "submitted":  # section 28: how and when, as typed
+        if not note:
+            return Understanding("ask", task_id=task_id, via=via, step="submit_how")
+        command = Command("submitted", task_id, note)
     elif intent == "snooze":
         when = reading.requested_date.isoformat() if reading.requested_date else ""
         command = Command("snooze", task_id, when)
@@ -186,6 +190,8 @@ def _by_rules(
         return Understanding("ask", task_id=task_id, step="blocked_reason")
     if command.name == "extension" and not command.value.strip():
         return Understanding("ask", task_id=task_id, step="extension_date")
+    if command.name == "submitted" and not command.value.strip():
+        return Understanding("ask", task_id=task_id, step="submit_how")
     if command.name == "done" and not has_files and not tasks.get(task_id, Task()).link.strip():
         return Understanding("ask", task_id=task_id, step="done_proof")
     return Understanding("change", command, task_id)
@@ -235,6 +241,12 @@ def describe(command: Command, task: Task | None, files: list[str] | None = None
         return f"Kirim {tid} untuk review – {moved('In Review')}{with_files}"
     if command.name == "done":
         return f"{tid} selesai – {moved('Done')}{with_files}"
+    if command.name == "submitted":
+        from app import clock, submission
+
+        sent = submission.read(value, clock.now())
+        how = f"{sent.method}, {sent.at:%d %b %Y %H:%M}" if sent else value
+        return f"{tid} sudah dikirim ({how}) – {moved('Done')}{with_files}"
     if command.name == "snooze":
         return f"Tanpa pengingat {tid} sampai {value or 'hari kerja berikutnya'}"
     if command.name == "note":

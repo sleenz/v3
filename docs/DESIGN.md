@@ -1055,3 +1055,28 @@ decides who may assign and when a PROMPT waits for the Manager.
 - Only the Doer answers. An unclear reply in the thread gets a hint. The morning message lists
   unanswered assignments first; the manager summary has "Waiting for acceptance".
 
+## 28. Review loop reminders and submission reports (approved 17 Nov 2026)
+
+- **Approved → submit.** Every morning until the task is Done, the Doer's morning message lists
+  it as "Approved: submit it, then reply: submitted G-… <how>". The approval notice says the same.
+- **Returned → revise.** Every morning until it is back In Review, the Doer's morning message
+  lists it as "Returned with feedback: revise and send review G-… again"; the return notice
+  carries the review notes and `status G-…` shows them. Returned no longer also counts as stale.
+- The manager summary adds "Approved, not submitted yet" and "Returned for changes"; "Awaiting
+  approval" no longer counts tasks waiting for the Doer's YES (they are under "Waiting for
+  acceptance"). The WhatsApp summary keeps its five numbers.
+- **Submission report** (`submitted G-0012 hardcopy to OJK today 15:30`, "sudah dikirim …",
+  "terkirim …", a Gemini `submitted` reading of plain words, or **Sudah dikirim** on the
+  WhatsApp card, which asks how and when):
+  - The method is read by rules from the words (Hardcopy, Email, WhatsApp, Portal, Fax); the
+    date and time from "today", "kemarin", "24/10", "23 Okt", "15:30", "jam 3" (1-6 o'clock
+    without "pagi" is the afternoon). No time means now. A future time or no method: the bot
+    asks "How and when was it submitted?" and changes nothing.
+  - It writes Status `Done`, `Submitted date`, and the optional Master columns `Submission
+    method` and `Submitted at`, and adds "Submitted <when> by <name>: <as typed>" to Notes. A
+    file or link with it is kept as proof (optional). It waits for YES like any typed change.
+  - A task that needs review must be Approved first. Support cannot submit (the Doer's).
+  - Every Manager, and the Owner when not the Doer, is told by email or WhatsApp: how, when,
+    the details and the due date.
+- The typed `done` command (proof file required) still works.
+

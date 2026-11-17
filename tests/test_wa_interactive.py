@@ -148,7 +148,7 @@ def test_lihat_tugas_sends_up_to_five_cards_then_a_list():
     assert len(cards) == 5
     _, body, buttons = cards[0]
     assert body.startswith(f"{ids[0]} – t0, due 26 Oct 2026 (hari ini), progress 0%")
-    assert [title for _, title in buttons] == ["Update progres", "Selesai", "Lainnya"]
+    assert [title for _, title in buttons] == ["Update progres", "Sudah dikirim", "Lainnya"]
     assert buttons[0][0] == f"upd:{ids[0]}"
     [(_, _, rows)] = ctx.wa.lists
     assert [r[0] for r in rows] == [f"card:{ids[5]}", f"card:{ids[6]}", f"card:{review}"]
@@ -223,8 +223,8 @@ def test_blocked_asks_the_reason_then_puts_it_on_hold_and_tells_owner_and_manage
         tap(f"more:{task_id}"),
         ctx,
     )
-    assert [r[1] for r in ctx.wa.lists[-1][2]] == ["Selesai", "Terhambat", "Minta perpanjangan",
-                                                   "Ingatkan besok", "Lihat file"]  # fmt: skip
+    menu = ["Sudah dikirim", "Terhambat", "Minta perpanjangan", "Ingatkan besok", "Lihat file"]
+    assert [r[1] for r in ctx.wa.lists[-1][2]] == menu
     assert handle_message(tap(f"blk:{task_id}", sender=P), ctx) == "tap_ask_blocked_reason"
     assert "Apa yang menghambat" in ctx.wa.last_text(P)
     handle_message(text("nunggu tanda tangan direksi", sender=P), ctx)

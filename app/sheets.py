@@ -50,7 +50,8 @@ DATE_COLUMNS = frozenset(
 )  # fmt: skip
 DATETIME_COLUMNS = frozenset(
     {"Last updated", "Notified at", "Timestamp", "Last at", "Created at", "Updated at",
-     "Sent at", "Queued at", "Started at", "Expires at", "Set at", "Last inbound at"}
+     "Sent at", "Queued at", "Started at", "Expires at", "Set at", "Last inbound at",
+     "Submitted at"}
 )  # fmt: skip
 WA_PENDING = "_wa_pending"
 RECURRING = "Recurring"

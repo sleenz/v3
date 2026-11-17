@@ -281,7 +281,14 @@ def notify(
         lines = [f"{task.id} was {verdict}: {task.title}", f"Due: {due}"]
         if event == "returned" and task.review_notes:
             lines += ["", f"Review notes: {task.review_notes}"]
-        lines += ["", f"When it is done, reply: done {task.id} (attach the proof).", link]
+        if event == "approved":
+            next_line = (
+                f"When you have submitted it, reply: submitted {task.id} <how and when>, "
+                "e.g. hardcopy to OJK today 15:30 (a file as proof is optional)."
+            )
+        else:
+            next_line = f"Revise it, then reply: review {task.id} (attach the new file)."
+        lines += ["", next_line, link]
         _send(
             store,
             gmail,
@@ -328,6 +335,24 @@ def notify(
         for manager in managers(staff):
             _send(store, gmail, email_of(manager.name), _subject(task, "declined"), lines,
                   person=manager.name, task_id=task.id, kind=event)  # fmt: skip
+    elif event == "submitted":
+        method, when, details = [*note.split("|", 2), "", "", ""][:3]
+        lines = [
+            f"{task.doer or 'The Doer'} submitted {task.id}: {task.title}",
+            f"How: {method or '-'}",
+            f"When: {when or '-'}",
+            f"Details: {details or '-'}",
+            f"Due was: {due}",
+            "",
+            link,
+        ]
+        people = {p.name.casefold(): p for p in managers(staff)}
+        owner = find_person(task.owner, staff)
+        if owner is not None and owner.name.casefold() != task.doer.strip().casefold():
+            people.setdefault(owner.name.casefold(), owner)
+        for person in people.values():
+            _send(store, gmail, email_of(person.name), _subject(task, "submitted"), lines,
+                  person=person.name, task_id=task.id, kind=event)  # fmt: skip
     elif event in ("extension_approved", "extension_rejected"):
         verdict = "approved" if event == "extension_approved" else "rejected"
         lines = [f"The extension for {task.id} was {verdict}: {task.title}", f"Due: {due}", link]
@@ -412,7 +437,7 @@ def _list_reply(title: str, tasks: list[Task], person: StaffMember | None = None
 
 CHANGES = frozenset({"progress", "review", "done", "approve", "return", "assign", "blocked",
                      "extension", "extension_ok", "extension_no", "snooze", "undo",
-                     "note", "accept", "decline"})  # fmt: skip
+                     "note", "accept", "decline", "submitted"})  # fmt: skip
 ANSWERS = frozenset({"accept", "decline"})  # the answer is the confirmation (section 23)
 
 
@@ -664,7 +689,50 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
         _apply(ctx, task, "Done", changes)
         return CommandResult(f"{task.id} is Done. Thank you.", task.id, changed=True)
 
+    if command.name == "submitted":
+        return _submitted(command, task, ctx, now)
+
     return CommandResult("I didn't understand that command. Send help.")
+
+
+def _submitted(command: Command, task: Task, ctx: CommandContext, now: datetime) -> CommandResult:
+    """The Doer reports how and when the task went to its requester (DESIGN section 28): Status
+    Done, the method and time written, a file or link kept as proof (optional), Managers told."""
+    from app import submission
+
+    if task.review_needed and task.status != "Approved":
+        return CommandResult(
+            f"{task.id} needs review first: send review {task.id} with the file.", task.id
+        )
+    sent = submission.read(command.value, now)
+    if sent is None:
+        return CommandResult(
+            f"How and when was {task.id} submitted? e.g. submitted {task.id} hardcopy to OJK "
+            "today 15:30 (or by email, WhatsApp, portal). Nothing changed.",
+            task.id,
+        )
+    header = ctx.store.master_header()
+    stamp = f"Submitted {sent.at:%d %b %Y %H:%M} by {ctx.actor.name}: {sent.details}"
+    changes: dict[str, Any] = {
+        "Status": "Done",
+        "Submitted date": sent.at.date(),
+        "Notes": f"{task.notes}\n{stamp}" if task.notes else stamp,
+    }
+    if "Submission method" in header:
+        changes["Submission method"] = sent.method
+    if "Submitted at" in header:
+        changes["Submitted at"] = sent.at
+    if ctx.files:
+        ctx.gmail.store_files(task.id, ctx.files)
+        changes["Link"] = files_label(ctx.files)
+    note = f"{sent.method}|{sent.at:%a %d %b %Y %H:%M}|{sent.details}"
+    _apply(ctx, task, "Submitted", changes, "submitted", note)
+    return CommandResult(
+        f"{task.id} is Done: submitted by {sent.method.lower()} on {sent.at:%a %d %b %Y %H:%M}. "
+        "The manager is told. Thank you.",
+        task.id,
+        changed=True,
+    )
 
 
 def task_status(task: Task, staff: list[StaffMember], today: date) -> str:

@@ -720,6 +720,8 @@ ASK_BY_EMAIL = {
     "blocked_reason": "What is blocking {task}? Reply: blocked {task} <reason>",
     "extension_date": "Which new date for {task}? Reply: extend {task} 20 Nov",
     "done_proof": "Attach the proof and reply: done {task}",
+    "submit_how": "How and when was {task} submitted? Reply: submitted {task} hardcopy to OJK "
+    "today 15:30 (or by email, WhatsApp, portal)",
 }
 
 
