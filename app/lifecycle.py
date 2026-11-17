@@ -437,7 +437,7 @@ def _list_reply(title: str, tasks: list[Task], person: StaffMember | None = None
 
 CHANGES = frozenset({"progress", "review", "done", "approve", "return", "assign", "blocked",
                      "extension", "extension_ok", "extension_no", "snooze", "undo",
-                     "note", "accept", "decline", "submitted"})  # fmt: skip
+                     "note", "accept", "decline", "submitted", "sheet_edit"})  # fmt: skip
 ANSWERS = frozenset({"accept", "decline"})  # the answer is the confirmation (section 23)
 
 
@@ -469,6 +469,9 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
     tasks = [t for t in store.tasks() if t.id]
     staff = store.staff()
     is_manager = actor.role == "Manager"
+
+    if command.name == "sheet_edit":  # section 29, on the Manager's YES
+        return _sheet_edit(command, ctx, now)
 
     if command.name in ("mine", "today", "week"):
         mine = _mine(tasks, actor)
@@ -693,6 +696,24 @@ def _run(command: Command, ctx: CommandContext) -> CommandResult:
         return _submitted(command, task, ctx, now)
 
     return CommandResult("I didn't understand that command. Send help.")
+
+
+def _sheet_edit(command: Command, ctx: CommandContext, now: datetime) -> CommandResult:
+    """Apply the Manager's checked cell changes (DESIGN section 29). They are checked again, as
+    the sheet may have changed since the preview."""
+    from app import sheet_edit
+
+    if ctx.actor.role != "Manager":
+        return CommandResult("Only the manager can change the sheet by prompt. Nothing changed.")
+    good, problems = sheet_edit.check(sheet_edit.load(command.value), ctx.store, now.date())
+    if not good:
+        return CommandResult("Nothing changed: " + "; ".join(problems))
+    written = sheet_edit.apply(good, ctx.store, ctx.actor.name, now, ctx.message_id,
+                               audit_user=ctx.actor.email or ctx.actor.name)  # fmt: skip
+    reply = "Changed:\n" + "\n".join(written)
+    if problems:
+        reply += "\nNot changed: " + "; ".join(problems)
+    return CommandResult(reply, good[0].key if good[0].tab == "Master" else None, changed=True)
 
 
 def _submitted(command: Command, task: Task, ctx: CommandContext, now: datetime) -> CommandResult:

@@ -1080,3 +1080,32 @@ decides who may assign and when a PROMPT waits for the Manager.
     the details and the due date.
 - The typed `done` command (proof file required) still works.
 
+## 29. The Manager changes the sheet by prompt (approved 17 Nov 2026)
+
+The owner asked for an interactive bot: Pak Dicki can have it write in the sheet. Scope chosen:
+Master, Staff and Config, always shown first and applied on YES.
+
+- **Who and how.** Only Staff with Role `Manager`, by a new email, a reply, or WhatsApp text.
+  Forwarded mail and a PROMPT line are never edits (they are requests).
+  - Fixed form, one change per line: `edit G-0012 Priority = High`,
+    `edit staff Staff A Reports to = Staff K`, `edit config Reminder time morning = 09:30`.
+  - Otherwise, with the AI on, plain words ("ubah deadline G-0012 jadi 5 Des", "Staff A lapor ke
+    Staff K", "reminder pagi jam 9:30") go to Gemini (`prompts/edit_v1.md`) with the masked
+    message, the tab column names, the Staff names, the Config settings and today's date. It
+    answers `is_edit` and the cells; not an edit or under 0.6 confident: handled as before.
+    With the AI on, every Manager message that is not a command costs one such call.
+- **Checks (code, not the AI).** The row must exist (task ID in Master, a Staff name, a Config
+  setting; a new setting is added as a row) and the column must be in the tab's header. Never
+  written: Master `ID`, `Weight`, `Source ID`, `Original message`, `Files`, `Last updated`;
+  Staff `Name`, `Staff ID`, `Weighted open load`. Dates, Progress and Status are read by rules;
+  Owner / Doer / Reviewer / Support must match Staff names (section 21 rules). "-" clears a
+  cell. At most 20 changes per message. What fails is listed with the reason.
+- **Confirmation.** "Reply YES to confirm" with one line per cell, `G-0012 · Due date:
+  2026-11-20 → 2026-12-05` (WhatsApp: [Ya] [Ubah] [Batal]). The question goes to the Manager's
+  own inbox or phone, so a forged sender cannot confirm. The changes are checked again on YES.
+  An edit Gemini read from a new email adds "Reply NO if this is a new request instead" (NO
+  logs it, D15); the fixed form's NO only cancels.
+- **Record.** Every cell goes to AuditLog (`Prompt edit (Master|Staff|Config)`, old and new
+  value). Master changes also go to ProgressLog and update `Last updated`, so `undo` works for
+  them; Staff and Config changes are undone by another edit.
+

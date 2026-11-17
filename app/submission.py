@@ -44,7 +44,8 @@ def method_in(text: str) -> str:
     return ""
 
 
-def _day(text: str, today: date) -> date | None:
+def day_in(text: str, today: date) -> date | None:
+    """A date named in `text`: today/kemarin, 24/10, 23 Okt; None when there is none."""
     plain = text.casefold()
     if re.search(r"\b(kemarin|yesterday)\b", plain):
         return today - timedelta(days=1)
@@ -76,7 +77,7 @@ def read(text: str, now: datetime) -> Submission | None:
     method = method_in(details)
     if not method:
         return None
-    day = _day(details, now.date()) or now.date()
+    day = day_in(details, now.date()) or now.date()
     clock_at = _TIME.search(details) or _HOUR.search(details)
     if clock_at:
         hour = int(clock_at.group(1))

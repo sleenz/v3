@@ -279,6 +279,12 @@ Replaces the 09:00 digest and the old daily WhatsApp reminder.
         manager is told.
       - After a return you get the feedback and a reminder every morning until you send
         `review G-0012` again with the new file.
+- [ ] Manager edits by prompt (DESIGN section 29), no setup needed. Tell the Manager:
+      - Email or WhatsApp the bot what to change, in plain words (with Gemini on): "ubah deadline
+        G-0012 jadi 5 Des", "G-0015 priority high", "Staff A lapor ke Staff K", "reminder pagi
+        jam 9:30". Without Gemini: `edit G-0012 Priority = High`.
+      - The bot shows every cell as before → after; nothing changes until you reply **YES**
+        (or tap **Ya**). Everything is in AuditLog; `undo G-0012` reverses a task change.
       - Full-time staff can assign themselves or their own interns the same way; naming anyone
         else waits for the Manager. Interns and additional help cannot assign.
       - A PROMPT the bot is unsure about (Gemini and the rules disagree, an unknown name, "or")

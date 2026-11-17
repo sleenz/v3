@@ -241,6 +241,10 @@ def describe(command: Command, task: Task | None, files: list[str] | None = None
         return f"Kirim {tid} untuk review – {moved('In Review')}{with_files}"
     if command.name == "done":
         return f"{tid} selesai – {moved('Done')}{with_files}"
+    if command.name == "sheet_edit":  # section 29: the cells, before → after
+        from app import sheet_edit
+
+        return "Ubah sheet:\n" + sheet_edit.preview(sheet_edit.load(value))
     if command.name == "submitted":
         from app import clock, submission
 

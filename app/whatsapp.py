@@ -690,6 +690,10 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
         prompt = parse_prompt(text)
         if prompt is not None:
             return _handle_prompt(message, prompt, ctx, now)
+        if person.role == "Manager" and not message.forwarded and ctx.gmail is not None:
+            edited = _manager_edit(message, person, ctx, now)  # section 29
+            if edited is not None:
+                return edited
         # section 27 before the deadline YES: "ya" replying to the assignment accepts (QA-A5)
         answered = _acceptance_answer(message, person, ctx) if message.context_id else None
         if answered is None:
@@ -709,6 +713,47 @@ def handle_message(message: WAMessage, ctx: WaContext, now: datetime | None = No
 # --- Typed replies (DESIGN section 22, part C) ---------------------------------------------------
 
 CONFIRM_BUTTONS = [("cf:yes", "Ya"), ("cf:edit", "Ubah"), ("cf:no", "Batal")]
+
+
+def _manager_edit(
+    message: WAMessage, person: StaffMember, ctx: WaContext, now: datetime
+) -> str | None:
+    """The Manager changes Master, Staff or Config by prompt (DESIGN section 29): rules or AI,
+    checked by code, shown before → after with [Ya] [Ubah] [Batal]. None: not an edit."""
+    from app import sheet_edit
+    from app.extract.clean import mask_text
+
+    store = ctx.store
+    text = message.text.strip()
+    if not text or _open_draft(store.wa_pending(), message.sender, now) is not None:
+        return None  # inside a request's 30-second window: it joins the draft
+    changes = sheet_edit.by_rules(text)
+    config = store.config()
+    if changes is None and config.ai_provider != "Off":
+        masked = mask_text(text, mask_emails=config.mask_emails_for_ai)
+        reading = sheet_edit.by_ai(ctx.services.ai, masked, store, now.date())
+        if reading is not None and reading.is_edit:
+            changes = reading.changes
+    if not changes:
+        return None
+    good, problems = sheet_edit.check(changes, store, now.date())
+    if not good:
+        _reply(ctx, message.sender, "Tidak bisa diubah: " + "; ".join(problems) + ".")
+        return "edit_refused"
+    pending = replies.Pending("sheet_edit", None, sheet_edit.dump(good), message.id)
+    if not replies.propose(store, person.name, "WhatsApp", pending, now):
+        _reply(ctx, message.sender, "Belum bisa menyimpan konfirmasi (tab _conversations "
+               "belum ada). Tidak ada yang diubah.")  # fmt: skip
+        return "reply_no_confirm_tab"
+    body = "Ubah sheet:\n" + sheet_edit.preview(good)
+    if problems:
+        body += "\nTidak diubah: " + "; ".join(problems)
+    try:
+        message_id = ctx.wa.send_buttons(message.sender, body[:1000] + "\nBenar?", CONFIRM_BUTTONS)
+        outbox.record(store, "WhatsApp", message_id, person.name, [""], "confirm")
+    except Exception as error:
+        logger.error("wa_confirm_failed", extra={"error_type": type(error).__name__})
+    return "edit_proposed"
 
 
 def _acceptance_answer(message: WAMessage, person: StaffMember, ctx: WaContext) -> str | None:

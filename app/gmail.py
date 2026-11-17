@@ -566,6 +566,7 @@ def _propose_by_email(
     person: Any,
     command: Any,
     intake: bool = False,
+    extra: str = "",
 ) -> None:
     """A typed change waits for YES (DESIGN section 22, decision 2): nothing is written now.
     `intake`: the message was a new email, not a reply (section 24); NO then logs it."""
@@ -582,8 +583,10 @@ def _propose_by_email(
             if intake
             else "Reply NO to cancel."
         )
+        summary = summary.replace("\n", "\n  ")
+        note = f"{extra}\n\n" if extra else ""
         text = (f"Reply YES to confirm (nothing has changed yet):\n  {summary}\n\n"
-                f"{cancel} This waits 30 minutes.")  # fmt: skip
+                f"{note}{cancel} This waits 30 minutes.")  # fmt: skip
     else:
         text = "I can't hold this for your confirmation (the sheet has no _conversations tab "
         text += "yet). Nothing changed; ask the manager to run installServiceTabs()."
@@ -828,6 +831,48 @@ def _understood_email(
 _FORWARD_SUBJECT = re.compile(r"^\s*(?:fwd?|fw|tr|wg)\s*:", re.IGNORECASE)
 
 
+def _manager_edit(
+    gmail: GmailClient, services: Services, message: GmailMessage, logged: list[str]
+) -> bool:
+    """A Manager's email asking to change cells in Master, Staff or Config (DESIGN section 29):
+    the fixed form `edit G-0012 Priority = High`, else the AI's reading. The changes are shown
+    before → after and applied on YES. False: not an edit (it is handled as before)."""
+    from app import sheet_edit
+    from app.commands import Command
+    from app.extract.clean import mask_text
+
+    store = services.store
+    person = _staff_sender(store, message)
+    if person is None or person.role != "Manager" or not _may_be_update(message):
+        return False
+    text = strip_noise(message.body_text) or message.body_text
+    today = clock.today()
+    changes = sheet_edit.by_rules(text)
+    config = store.config()
+    by_ai = False
+    if changes is None and config.ai_provider != "Off":
+        masked = mask_text(text, mask_emails=config.mask_emails_for_ai)
+        reading = sheet_edit.by_ai(services.ai, masked, store, today)
+        if reading is not None and reading.is_edit:
+            changes, by_ai = reading.changes, True
+    if not changes:
+        return False
+    good, problems = sheet_edit.check(changes, store, today)
+    new_email = not logged and not outbox.by_thread(store, message.thread_id)
+    if not good:
+        why = "I could not change that: " + "; ".join(problems) + "."
+        _thread_reply(gmail, store, message, why, person.name, "", "reply")
+        _modify(gmail, message.id, [REPLY_LABEL], [UNREAD] if new_email else [UNREAD, INBOX])
+        return True
+    extra = ("Not changed: " + "; ".join(problems)) if problems else ""
+    _propose_by_email(gmail, store, message, person,
+                      Command("sheet_edit", None, sheet_edit.dump(good)),  # type: ignore[arg-type]
+                      intake=new_email and by_ai, extra=extra)  # fmt: skip
+    _modify(gmail, message.id, [COMMAND_LABEL], [UNREAD] if new_email else [UNREAD, INBOX])
+    logger.info("prompt_edit_proposed", extra={"n_changes": len(good)})
+    return True
+
+
 def _may_be_update(message: GmailMessage) -> bool:
     """False for mail that is always a request: forwarded, or with a PROMPT line (s. 24)."""
     from app.extract import prompt as sender_prompt
@@ -1063,6 +1108,9 @@ def process_inbox(
                 continue
             if fresh and _email_confirmation(gmail, services, message, sheet_url):
                 run.commands += 1  # YES / NO to a proposed change (section 22)
+                continue
+            if fresh and _manager_edit(gmail, services, message, logged):
+                run.commands += 1  # the Manager changes the sheet by prompt (section 29)
                 continue
             if fresh and not logged and _outbox_reply(gmail, services, message, sheet_url):
                 run.replies += 1  # a reply to a reminder or notice: AI first (section 22)

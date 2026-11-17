@@ -240,7 +240,10 @@ class FakeAIProvider:
         assignee: str | None = None,
         reading: dict[str, Any] | None = None,
         reply: dict[str, Any] | Exception | str | None = None,
+        edit: dict[str, Any] | Exception | None = None,
     ):
+        self.edit = edit  # read_edit: an EditReading dict or an exception (section 29)
+        self.edit_calls: list[str] = []
         self.reply = reply  # read_reply: a ReplyReading dict, an exception, or raw text
         self.reply_calls: list[str] = []
         from app.extract.ai import PromptReading
@@ -298,6 +301,14 @@ class FakeAIProvider:
         if isinstance(self.reply, str):  # raw text: invalid JSON from the model
             return ReplyReading.model_validate_json(self.reply)
         return None if self.reply is None else ReplyReading.model_validate(self.reply)
+
+    def read_edit(self, prompt: str):
+        from app.sheet_edit import EditReading
+
+        self.edit_calls.append(prompt)
+        if isinstance(self.edit, Exception):
+            raise self.edit
+        return None if self.edit is None else EditReading.model_validate(self.edit)
 
 
 class FakeGmailClient:

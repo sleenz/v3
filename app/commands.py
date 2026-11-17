@@ -21,6 +21,7 @@ CommandName = Literal[
     "accept", "decline",  # section 23: the assignee answers a Manager's assignment
     "status",  # section 24: one task's state, read from the Sheet
     "submitted",  # section 28: how and when it was submitted to the requester
+    "sheet_edit",  # section 29: the Manager's cell changes (JSON), applied on YES
 ]  # fmt: skip
 
 _TASK_ID = re.compile(r"\bG-?(\d{1,5})\b", re.IGNORECASE)
