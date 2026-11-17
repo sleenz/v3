@@ -96,6 +96,12 @@ def run_changes(
         rows[task.id] = _state_row(task, notified_doer, notified_at)
         if previous is not None and previous.status != task.status:
             _status_event(store, gmail, task, sheet_url, wa)  # v1.4: a review step in Sheet
+            if previous.status == "Proposed" and task.acceptance.strip().lower() in (
+                "pending",
+                "asked",
+            ):  # the Manager started it in the Sheet: no answer is waited for any more
+                store.update_task(task.id, {"Acceptance": ""})
+                task = task.model_copy(update={"acceptance": ""})
         doer = task.doer.strip()
         # Section 27: a PROMPT assignment (Proposed, Acceptance Pending) gets the assignment
         # email with the files and the YES / NO question, once per Doer.
@@ -114,6 +120,9 @@ def run_changes(
             email = _assignment_with_files(task, staff, sheet_url, gmail)
             if asking:
                 email = acceptance.with_question(email, task)
+        except FilesUnavailable:
+            run.not_sent += 1  # held: the next run fetches the files again
+            continue
         except MissingEmail:
             run.not_sent += 1
             if NO_EMAIL_FLAG not in task.flags:
@@ -180,7 +189,9 @@ def _status_event(
 def _assignment_with_files(
     task: Task, staff: list[StaffMember], sheet_url: str, gmail: GmailClient
 ) -> OutgoingEmail:
-    """The assignment email with the task's files from the bot mailbox (v1.4 decision F4)."""
+    """The assignment email with the task's files from the bot mailbox (v1.4 decision F4).
+    When the files cannot be fetched it raises `FilesUnavailable`: the email is held and the
+    next run tries again, so nobody gets an assignment without its files (section 27)."""
     email = assignment_email(task, staff, sheet_url)
     try:
         files = gmail.task_files(task.id, task.source_id)
@@ -190,8 +201,12 @@ def _assignment_with_files(
         logger.warning(
             "task_files_failed", extra={"task_id": task.id, "error_type": type(error).__name__}
         )
-        files = []
+        raise FilesUnavailable(task.id) from error
     return with_files(email, files)
+
+
+class FilesUnavailable(Exception):
+    """The bot mailbox did not give the task's files this time."""
 
 
 def send_assignment(store: SheetStore, gmail: GmailClient, task: Task, sheet_url: str) -> bool:

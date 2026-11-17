@@ -192,6 +192,21 @@ class PromptDecision:
     support: list[str] = field(default_factory=list)  # section 25: named with the owner
 
 
+_ME = re.compile(
+    r"(?<!\w)((?:to|ke|kepada|untuk|assign|assign this to|tugaskan|kasih|serahkan)\s+)"
+    r"(?:me|myself|saya|aku|gue|gw)(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def me_is(prompt: str, sender: StaffMember | None) -> str:
+    """ "assign this to me", "kasih ke saya": the sender's Staff name (section 26). Only right
+    after an assignment word, so "saya minta deadline Jumat" stays as it is."""
+    if sender is None:
+        return prompt
+    return _ME.sub(lambda found: found.group(1) + sender.name, prompt)
+
+
 def decide_prompt(
     prompt: str,
     today: date,
@@ -338,8 +353,9 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
     staff = store.staff()
     decision = PromptDecision()
     if note:
-        masked_prompt = mask_text(note, mask_emails=config.mask_emails_for_ai)
-        decision = decide_prompt(note, today, staff, services.ai, masked_prompt)
+        prompt_read = me_is(note, submitter)  # "assign this to me / ke saya": the sender
+        masked_prompt = mask_text(prompt_read, mask_emails=config.mask_emails_for_ai)
+        decision = decide_prompt(prompt_read, today, staff, services.ai, masked_prompt)
         flags.extend(decision.flags)
     body = unwrapped.body
 

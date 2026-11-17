@@ -238,3 +238,42 @@ def test_an_unanswered_assignment_is_in_the_morning_message_and_the_manager_summ
     assert mine and "waiting for your answer" in mine[0].text and task.id in mine[0].text
     summary = [e for e, _ in gmail.sent if "staff.k@example.com" in e.to and "Team" in e.subject]
     assert summary and "Waiting for acceptance (1)" in summary[0].text
+
+
+# --- follow-ups (17 Nov) ------------------------------------------------------------------------
+
+
+def test_files_that_cannot_be_fetched_hold_the_email_and_it_is_retried(monkeypatch):
+    services, gmail = setup()
+    task = assigns(services, gmail)
+    real = gmail.task_files
+
+    def broken(*args, **kwargs):
+        raise OSError("mailbox busy")
+
+    monkeypatch.setattr(gmail, "task_files", broken)
+    run = changes(services, gmail)
+    assert (run.asked, run.not_sent) == (0, 1)
+    assert now(services, task.id).acceptance == "Pending"  # not asked without the files
+    monkeypatch.setattr(gmail, "task_files", real)
+    assert changes(services, gmail).asked == 1
+    [email] = assignment_emails(gmail, "staff.p@example.com")
+    assert [a.filename for a in email.attachments] == ["Surat.pdf"]
+
+
+def test_the_manager_starting_it_in_the_sheet_clears_the_question():
+    services, gmail = setup()
+    task, _ = emailed(services, gmail)
+    services.store.update_task(task.id, {"Status": "Not Started"})
+    changes(services, gmail)
+    assert now(services, task.id).acceptance == ""
+    assert changes(services, gmail).emailed == 0  # the Doer already has the files
+
+
+def test_assign_this_to_me_is_the_sender():
+    services, gmail = setup()
+    task = assigns(services, gmail, "PROMPT: tolong kasih ke saya ya")
+    assert (task.doer, task.status, task.acceptance) == ("Staff K", "Not Started", "Accepted")
+    other = assigns(services, gmail, "PROMPT: assign this to Staff P, saya minta cepat",
+                    message_id="req-2")  # fmt: skip
+    assert (other.doer, other.supporters) == ("Staff P", [])

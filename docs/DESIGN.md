@@ -1054,6 +1054,12 @@ decides who may assign and when a PROMPT waits for the Manager.
   hint `assign G-… to <name>`, which sets `Pending` again, so the new person gets the email.
 - Only the Doer answers. An unclear reply in the thread gets a hint. The morning message lists
   unanswered assignments first; the manager summary has "Waiting for acceptance".
+- If the files cannot be fetched from the bot mailbox, the email is held (Acceptance stays
+  `Pending`) and the next run tries again: nobody is asked without the files.
+- If the Manager starts the task in the Sheet himself (Status out of Proposed), the question is
+  cleared (Acceptance blank); a later YES gets "not waiting for your answer".
+- "assign this to me", "kasih ke saya" in a PROMPT mean the sender (only right after an
+  assignment word, so "saya minta deadline Jumat" stays as it is).
 
 ## 28. Review loop reminders and submission reports (approved 17 Nov 2026)
 
@@ -1077,7 +1083,9 @@ decides who may assign and when a PROMPT waits for the Manager.
     question, so YES writes what was shown.
   - It writes Status `Done`, `Submitted date`, and the optional Master columns `Submission
     method` and `Submitted at`, and adds "Submitted <when> by <name>: <as typed>" to Notes. A
-    file or link with it is kept as proof (optional). It waits for YES like any typed change.
+    file or link with it is kept as proof (optional). A typed or emailed report waits for YES
+    like any typed change; the answer to the WhatsApp **Sudah dikirim** question saves at once,
+    like every button flow (section 22).
   - A task that needs review must be Approved first. Support cannot submit (the Doer's).
   - Every Manager, and the Owner when not the Doer, is told by email or WhatsApp: how, when,
     the details and the due date.
@@ -1106,7 +1114,8 @@ Master, Staff and Config, always shown first and applied on YES.
   listed with the reason. Every new value is also checked against the model the sheet is
   loaded with (the task row, the Staff row, the whole Config): a value the service could not
   read back ("Workday start = banana", "Role = Boss") is refused, as it would stop every job.
-  A command (`approve G-…`, `status G-…`) is never sent to the edit reader.
+  A command (`approve G-…`, `status G-…`) is never sent to the edit reader. The Manager's own
+  Staff `Email` and `Role` are never changed by prompt (one typo would remove his rights).
 - **Confirmation.** "Reply YES to confirm" with one line per cell, `G-0012 · Due date:
   2026-11-20 → 2026-12-05` (WhatsApp: [Ya] [Ubah] [Batal]). The question goes to the Manager's
   own inbox or phone, and an email YES counts only in the thread that asked, so a forged

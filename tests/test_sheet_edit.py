@@ -208,3 +208,13 @@ def test_people_columns_take_staff_names_only():
     assert [(c.column, c.value) for c in good] == [("Doer", "Staff A"),
                                                    ("Support", "Staff D; Staff B")]  # fmt: skip
     assert problems == ['G-0001 Reviewer: "Zorro" is not in Staff']
+
+
+def test_the_manager_cannot_change_his_own_email_or_role_by_prompt():
+    services, _, _ = setup()
+    asked = [Change(tab="Staff", key="Staff K", column="Email", value="typo@example.com"),
+             Change(tab="Staff", key="Staff K", column="Role", value="Full time"),
+             Change(tab="Staff", key="Staff A", column="Role", value="Intern")]  # fmt: skip
+    good, problems = check(asked, services.store, TODAY, actor="Staff K")
+    assert [(c.key, c.column) for c in good] == [("Staff A", "Role")]
+    assert len(problems) == 2 and all("your own" in p for p in problems)

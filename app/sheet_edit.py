@@ -209,6 +209,7 @@ def _value(column: str, raw: str, today: date) -> tuple[Any, str]:
 
 
 PEOPLE_COLUMNS = {"Owner", "Doer", "Reviewer", "Support"}
+SELF_LOCKED = {"Email", "Role"}  # the Manager's own row: a typo would remove his rights
 
 
 def _people(text: str, staff: list[StaffMember], many: bool) -> tuple[str, str]:
@@ -267,7 +268,9 @@ def _still_loads(
         return f'"{value}" is not a value the sheet can use there'
 
 
-def check(changes: list[Change], store: SheetStore, today: date) -> tuple[list[Change], list[str]]:
+def check(
+    changes: list[Change], store: SheetStore, today: date, actor: str = ""
+) -> tuple[list[Change], list[str]]:
     """The changes that can be written (key and column as in the sheet, value read, the old
     value kept for the preview) and a reason for each one that cannot."""
     good: list[Change] = []
@@ -306,6 +309,10 @@ def check(changes: list[Change], store: SheetStore, today: date) -> tuple[list[C
             continue
         if column in PROTECTED[change.tab]:
             problems.append(f"{change.tab} {column} is not changed by prompt")
+            continue
+        if change.tab == "Staff" and column in SELF_LOCKED and key.casefold() == actor.casefold():
+            problems.append(f"your own {column} is not changed by prompt (one typo would lock you "
+                            "out); change it in the sheet")  # fmt: skip
             continue
         value, problem = _value(column, change.value, today)
         if not problem and change.tab == "Master" and column in PEOPLE_COLUMNS and value:

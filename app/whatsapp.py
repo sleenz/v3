@@ -57,6 +57,7 @@ from app.pipeline import (
     SERVICE_USER,
     Services,
     decide_prompt,
+    me_is,
     process_request,
 )
 from app.route import (
@@ -742,7 +743,7 @@ def _manager_edit(
             changes = reading.changes
     if not changes:
         return None
-    good, problems = sheet_edit.check(changes, store, now.date())
+    good, problems = sheet_edit.check(changes, store, now.date(), person.name)
     if not good:
         _reply(ctx, message.sender, "Tidak bisa diubah: " + "; ".join(problems) + ".")
         return "edit_refused"
@@ -1050,6 +1051,8 @@ def _apply_late_prompt(
     replies: list[str] = []
     audits: list[tuple[str, str, str]] = []
     flags = list(task.flags)
+    sender_person = _person(store, sender) if sender else None
+    prompt = me_is(prompt, sender_person)  # "assign this to me" (section 26)
     decision = decide_prompt(prompt, now.date(), store.staff(), ctx.services.ai)
     name = decision.owner
     flags += [f for f in decision.flags if "not found" not in f and "couldn't read" not in f]

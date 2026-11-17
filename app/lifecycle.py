@@ -705,7 +705,8 @@ def _sheet_edit(command: Command, ctx: CommandContext, now: datetime) -> Command
 
     if ctx.actor.role != "Manager":
         return CommandResult("Only the manager can change the sheet by prompt. Nothing changed.")
-    good, problems = sheet_edit.check(sheet_edit.load(command.value), ctx.store, now.date())
+    changes = sheet_edit.load(command.value)
+    good, problems = sheet_edit.check(changes, ctx.store, now.date(), ctx.actor.name)
     if not good:
         return CommandResult("Nothing changed: " + "; ".join(problems))
     written = sheet_edit.apply(good, ctx.store, ctx.actor.name, now, ctx.message_id,

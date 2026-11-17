@@ -864,7 +864,7 @@ def _manager_edit(
             changes, by_ai = reading.changes, True
     if not changes:
         return False
-    good, problems = sheet_edit.check(changes, store, today)
+    good, problems = sheet_edit.check(changes, store, today, person.name)
     new_email = not logged and not outbox.by_thread(store, message.thread_id)
     if not good and by_ai and new_email:
         return False  # read by the AI, nothing valid: handled as a request (D15, QA6-C10)
