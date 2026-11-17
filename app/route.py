@@ -218,8 +218,9 @@ def sender_assignment(
 ) -> RouteResult:
     """Apply "assign this to <name>" from the sender's PROMPT (v1.3; email: section 21).
 
-    A person chose, not the AI, and the task still waits for the manager's approval. The rules'
-    proposal is kept in the routing note. An unknown name leaves the rules' result and flags it.
+    A person chose, not the AI; whether it starts at once is `assignment_hold` (section 26).
+    The rules' proposal is kept in the routing note. An unknown name leaves the rules' result
+    and flags it.
     """
     person = match_staff_name(name, staff)
     if person is None:
@@ -294,15 +295,48 @@ def default_reviewer(reviewer: str, doer: str, staff: list[StaffMember]) -> Staf
     return next(iter(managers(staff)), None)
 
 
+NOT_ASSIGNER = "only a Manager or full-time staff can assign work"
+
+
+def assignment_hold(sender: StaffMember | None, doer: StaffMember | None) -> str | None:
+    """Why a PROMPT assignment waits for the Manager instead of starting at once (section 26),
+    or None. The Manager may assign anyone; full-time staff themselves or someone who reports
+    to them (as in v1.4 A2); interns and additional help cannot assign."""
+    if sender is None:
+        return "the sender is not in Staff"
+    if sender.role == "Manager":
+        return None
+    if not sender.can_assign:
+        return NOT_ASSIGNER
+    if doer is None:
+        return "the Doer is not in Staff"
+    if doer.name == sender.name or doer.reports_to.strip().casefold() == sender.name.casefold():
+        return None
+    return f"{doer.name} does not report to {sender.name}"
+
+
+def prompt_unsure(flags: list[str]) -> bool:
+    """A PROMPT reading the Manager should check before the task starts (section 26): the AI and
+    the rules disagree on the owner, or the person's internship ends too soon. ("is a manager"
+    and "is additional help" only stop the rules from proposing them, R3.)"""
+    return any(
+        f.startswith("PROMPT: owner unclear")
+        or (f.startswith("Assigned by sender:") and "internship" in f)
+        for f in flags
+    )
+
+
 def delegation_problem(
     actor: StaffMember, owner: str, doer: str, target: StaffMember, staff: list[StaffMember]
 ) -> str | None:
     """Why `actor` may not hand a task to `target` (v1.4 A2), or None if allowed.
 
     The Manager may hand any task to anyone; the task's Owner or Doer only to someone who
-    reports to them, or back to themselves."""
+    reports to them, or back to themselves. Interns and additional help never (section 26)."""
     if actor.role == "Manager":
         return None
+    if not actor.can_assign:
+        return NOT_ASSIGNER
     is_party = actor.name.casefold() in (owner.strip().casefold(), doer.strip().casefold())
     if not is_party:
         return "only the task's Owner, Doer or the Manager can reassign it"

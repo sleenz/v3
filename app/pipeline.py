@@ -28,9 +28,12 @@ from app.extract.clean import (
 )
 from app.models import AuditEntry, Contact, RawRequest, StaffMember, Task, TaskResult
 from app.route import (
+    assignment_hold,
+    find_person,
     fuzzy_staff_name,
     joined_groups,
     match_staff_name,
+    prompt_unsure,
     route,
     sender_assignment,
     split_team,
@@ -56,10 +59,11 @@ class Services:
 
 def next_step(task: Task) -> str:
     """What happens next, for the reply to the sender."""
-    if task.awaiting_acceptance:
-        return f"Assigned by the manager; waiting for {task.doer} to accept."
     if task.status != "Proposed":
-        return f"Assigned by the manager to {task.doer}; started."
+        return (
+            f"Assigned to {task.doer}; started. They get the assignment email with the files "
+            "within a few minutes (in working hours)."
+        )
     return "Waiting for manager approval."
 
 
@@ -110,6 +114,8 @@ def _files_note(raw: RawRequest) -> str:
 
 
 PROMPT_NOT_STAFF_FLAG = "PROMPT ignored: sender is not in Staff"
+PROMPT_NOT_ASSIGNER_FLAG = "PROMPT ignored: only a Manager or full-time staff can assign work"
+HOLD_FLAG = "PROMPT: waiting for the manager"
 
 
 @dataclass
@@ -273,11 +279,6 @@ def _staff_member(store: SheetStore, email: str) -> StaffMember | None:
     return next((p for p in store.staff() if p.email.strip().lower() == wanted), None)
 
 
-def _is_staff(store: SheetStore, email: str) -> bool:
-    wanted = email.strip().lower()
-    return bool(wanted) and any(p.email.strip().lower() == wanted for p in store.staff())
-
-
 def _unique_contacts(contacts: list[Contact]) -> list[Contact]:
     seen: set[str] = set()
     unique = []
@@ -309,19 +310,26 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
         unwrapped = Unwrapped(original, raw.sender_name, raw.sender_email, "", None, False)
 
     # 2b. An email PROMPT (DESIGN section 21): any `PROMPT:` line the sender typed, above a
-    # forward or anywhere in a new email. Only a Staff member's PROMPT counts.
+    # forward or anywhere in a new email. Only a Manager's or full-time staff member's PROMPT
+    # counts (section 26); an intern's or additional help's is ignored and flagged.
+    submitter = _staff_member(store, raw.sender_email)  # who sent it in (section 26)
+    may_assign = submitter is not None and submitter.can_assign
     note = raw.sender_note.strip()
+    prompt_ignored = False
     if raw.source == "Email" and not note:
         typed = unwrapped.manager_note if unwrapped.forwarded else unwrapped.body
         found, rest = sender_prompt.split_prompt_lines(typed or "")
-        if found and _is_staff(store, raw.sender_email):
+        if found and may_assign:
             note = found
             if unwrapped.forwarded:
                 unwrapped = replace(unwrapped, manager_note=rest.strip() or None)
             else:
                 unwrapped = replace(unwrapped, body=rest)
         elif found:
-            flags.append(PROMPT_NOT_STAFF_FLAG)
+            flags.append(PROMPT_NOT_ASSIGNER_FLAG if submitter else PROMPT_NOT_STAFF_FLAG)
+    elif note and not may_assign:  # a WhatsApp PROMPT
+        flags.append(PROMPT_NOT_ASSIGNER_FLAG if submitter else PROMPT_NOT_STAFF_FLAG)
+        note, prompt_ignored = "", True
     staff = store.staff()
     decision = PromptDecision()
     if note:
@@ -443,7 +451,7 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
         ai_catalog_id=ai_catalog_id,
         known_catalog_id=raw.catalog_id,
     )
-    assign_to = decision.owner if note else raw.assign_to
+    assign_to = decision.owner if note else (None if prompt_ignored else raw.assign_to)
     if assign_to:
         routed = sender_assignment(routed, assign_to, staff, today, due_date, channel=raw.source)
     flags.extend(routed.flags)
@@ -461,24 +469,18 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
     if note:
         notes = "\n".join(part for part in (notes, f"Sender's PROMPT: {note}") if part)
     source = raw.source_id if raw.source == "Recurring" else raw.source
-    # Section 23: a Manager's PROMPT that names the owner is the approval; the Doer is asked to
-    # accept (or it starts at once when the Manager names themselves). Needs the Master column
-    # `Acceptance`; without it the task waits for approval as before.
-    status, acceptance = "Proposed", ""
-    sender = _staff_member(store, raw.sender_email)
+    # Section 26: a PROMPT that names the owner is the assignment. From the Manager, or from
+    # full-time staff for themselves or someone who reports to them, the task starts at once and
+    # the change job emails the Doer the files. It waits for the Manager when the owner is
+    # unclear, the person is away, or the sender may not assign that person.
+    status = "Proposed"
     doer_name = routed.doer or routed.owner or ""
-    if (
-        note
-        and decision.owner
-        and doer_name
-        and sender is not None
-        and sender.role == "Manager"
-        and "Acceptance" in store.master_header()
-    ):
-        if doer_name.casefold() == sender.name.casefold():
-            status, acceptance = "Not Started", "Accepted"
+    if note and decision.owner and doer_name:
+        hold = assignment_hold(submitter, find_person(doer_name, staff))
+        if hold is None and not prompt_unsure(flags):
+            status = "Not Started"
         else:
-            acceptance = "Pending"
+            flags.append(f"{HOLD_FLAG} ({hold})" if hold else HOLD_FLAG)
     team = {routed.owner or "", doer_name} if note and decision.owner else set()
     support = [name for name in decision.support if name not in team] if team else []
     task = Task(
@@ -494,7 +496,6 @@ def process_request(raw: RawRequest, services: Services, today: date | None = No
         start=raw.received_at.astimezone(clock.TZ).date(),
         due_date=due_date,
         status=status,
-        acceptance=acceptance,
         last_updated=clock.now(),
         notes=notes,
         flag="; ".join(dict.fromkeys(flags)),

@@ -325,7 +325,7 @@ def test_late_prompt_updates_the_task_just_logged():
     outcome = handle_message(text("w2", "PROMPT: assign this to Staff P"), ctx, now=later)
     assert outcome == "late_prompt"
     assert task(ctx, task_id).owner == "Staff P"
-    assert "proposed owner is now Staff P" in ctx.wa.last_text(A)
+    assert "owner is now Staff P" in ctx.wa.last_text(A)
     backend = ctx.store.backend
     assert backend.column("AuditLog", "Task ID")[-1] == task_id
     assert backend.column("AuditLog", "Action")[-1] == "PROMPT applied"

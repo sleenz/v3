@@ -166,7 +166,6 @@ def test_manager_sections():
         "Waiting for review": ["G-3"],
         "Awaiting approval": ["G-4"],
         "Blocked": ["G-5"],
-        "Waiting for acceptance": [],
     }
 
 

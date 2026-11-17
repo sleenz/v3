@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 
 from pydantic import BaseModel
 
-from app import acceptance, clock, outbox, recurring
+from app import clock, outbox, recurring
 from app.events import should_wait
 from app.gmail import GmailAuthError, GmailClient
 from app.models import (
@@ -50,7 +50,6 @@ class ChangesRun(BaseModel):  # counts only (no names or emails in logs)
     emailed: int = 0
     not_sent: int = 0
     waiting: int = 0  # outside working hours: sent at the next Workday start (section 22)
-    asked: int = 0  # assignees asked to accept a Manager's assignment (section 23)
 
 
 def _state_row(task: Task, notified_doer: str, notified_at: datetime | None) -> StateRow:
@@ -97,20 +96,6 @@ def run_changes(
         if previous is not None and previous.status != task.status:
             _status_event(store, gmail, task, sheet_url, wa)  # v1.4: a review step in Sheet
         doer = task.doer.strip()
-        if acceptance.pending(task) and doer:  # section 23: ask the Doer to accept, once
-            if closed:
-                run.waiting += 1
-            elif not acceptance.asked(store, task):
-                try:
-                    run.asked += int(acceptance.ask(store, gmail, wa, task, sheet_url))
-                except GmailAuthError:
-                    raise
-                except Exception as error:
-                    logger.error(
-                        "accept_ask_failed",
-                        extra={"task_id": task.id, "error_type": type(error).__name__},
-                    )
-            continue
         if task.status not in OPEN_STATUSES or not doer or doer == notified_doer:
             continue
         person = find_person(doer, staff)

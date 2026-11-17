@@ -103,8 +103,8 @@ def test_status_text_reads_the_sheet():
     text = task_status(Task.model_validate({**base, "Status": "In Progress"}), staff, MONDAY)
     assert text.startswith("G-0012 – Stress test: due Thu 29 Oct 2026 (3 hari lagi)")
     assert "status In Progress, progress 40%" in text
-    pending = Task.model_validate({**base, "Status": "Proposed", "Acceptance": "Pending"})
-    assert "Waiting for Staff A to accept." in task_status(pending, staff, MONDAY)
+    proposed = Task.model_validate({**base, "Status": "Proposed"})
+    assert "Waiting for the manager's approval." in task_status(proposed, staff, MONDAY)
     notes = "x\nBlocked 26 Oct 2026 by Staff A: finance data"
     held = Task.model_validate({**base, "Status": "On Hold", "Notes": notes})
     assert "Blocked 26 Oct 2026 by Staff A: finance data" in task_status(held, staff, MONDAY)

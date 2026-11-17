@@ -36,7 +36,7 @@ HELP_TEXT = (
     "• Paste a request (e.g. a WhatsApp message) and I will log it and propose an owner.\n"
     "• *my tasks* – your open tasks.\n"
     "• *help* – this message.\n"
-    "Logged requests wait for the manager's approval before anyone is assigned."
+    "A PROMPT from the Manager assigns at once; other requests wait for the manager's approval."
 )
 
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="chat")
